@@ -414,6 +414,6 @@ class OverlayService : Service() {
         tapPointView?.let { windowManager.removeView(it) }
         handler.removeCallbacksAndMessages(null)
         virtualDisplay?.release(); imageReader?.close(); mediaProjection?.stop()
-        if (isOcrInitialized) tessBaseAPI.recycle()
+        if (isOcrInitialized) tessBaseAPI.clear()
     }
 }
