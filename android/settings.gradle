@@ -1,4 +1,5 @@
 include ':app'
 
-project(':capacitor-android').projectDir = new File('../node_modules/@capacitor/android/capacitor')
+// 先に include してから、そのプロジェクトの場所を指定するのが Gradle の正解です
 include ':capacitor-android'
+project(':capacitor-android').projectDir = new File(settingsDir, '../node_modules/@capacitor/android/capacitor')
