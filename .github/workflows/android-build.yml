@@ -1,10 +1,8 @@
-name: Android Build
+name: Build Android APK
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -12,42 +10,38 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout Source
+        uses: actions/checkout@v4
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-        cache: 'npm'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
 
-    - name: Install Dependencies
-      run: npm install
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
 
-    - name: Build Web App
-      run: npm run build
+      - name: Install Dependencies
+        run: npm install
 
-    - name: Sync Capacitor
-      run: npx cap sync android
+      - name: Build Web App
+        run: npm run build
 
-    - name: Set up JDK 21
-      uses: actions/setup-java@v4
-      with:
-        java-version: '21'
-        distribution: 'temurin'
-        cache: gradle
+      - name: Capacitor Sync
+        run: npx cap sync android
 
-    # 壊れたファイルを無視して、強制的に実行権限を付与する（数時間前と同じ）
-    - name: Grant execute permission for gradlew
-      run: chmod +x android/gradlew
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          # Java 21 をサポートする Gradle 8.7 を GitHub 側で用意します
+          gradle-version: 8.7
 
-    # 壊れたファイルを無視して、強制的にビルドを実行する（数時間前と同じ）
-    - name: Build Debug APK
-      working-directory: ./android
-      run: ./gradlew assembleDebug
-
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: app-debug
-        path: android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Build Android APK
+        run: |
+          cd android
+          # 破損した ./gradlew ではなく、システム標準の gradle コマンドを直接使います
+          gradle assembleDebug --stacktrace
