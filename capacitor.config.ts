@@ -2,7 +2,7 @@ import { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.Kproject.app',
-  appName: 'KAI Auto Battle',
+  appName: 'DQWEXP',
   webDir: 'dist'
 };
 
