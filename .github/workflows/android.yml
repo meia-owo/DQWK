@@ -45,3 +45,10 @@ jobs:
           cd android
           # 破損した ./gradlew ではなく、システム標準の gradle コマンドを直接使います
           gradle assembleDebug --stacktrace
+
+      # --- ここから下が追加部分です ---
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
