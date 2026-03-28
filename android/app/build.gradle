@@ -2,18 +2,17 @@ apply plugin: 'com.android.application'
 
 android {
     namespace "com.example.app"
-    compileSdk 34  // これが足りなかった設定です
+    compileSdk 36  // 34 から 36 に上げました
 
     defaultConfig {
         applicationId "com.example.app"
         minSdk 22
-        targetSdk 34
+        targetSdk 36  // ここも 36 に上げました
         versionCode 1
         versionName "1.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
-             // Android アプリとして動かすための設定
              ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
@@ -25,7 +24,6 @@ android {
         }
     }
 
-    // Capacitor が生成したアセットを読み込むための設定
     sourceSets {
         main {
             assets.srcDirs = ['src/main/assets']
