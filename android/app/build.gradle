@@ -73,7 +73,7 @@ try {
     logger.warn("capacitor.build.gradle not found, skipping plugin inclusion")
 }
 
-task downloadTessData {
+tasks.register('downloadTessData') {
     def destDir = file('src/main/assets/tessdata')
     def destFile = file("$destDir/jpn.traineddata")
     
@@ -89,4 +89,6 @@ task downloadTessData {
     }
 }
 
-preBuild.dependsOn downloadTessData
+tasks.named('preBuild').configure {
+    dependsOn 'downloadTessData'
+}
