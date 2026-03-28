@@ -35,16 +35,18 @@ jobs:
       with:
         java-version: '21'
         distribution: 'temurin'
-        cache: gradle
 
-    # 壊れたファイルを無視して、強制的に実行権限を付与する（数時間前と同じ）
-    - name: Grant execute permission for gradlew
-      run: chmod +x android/gradlew
+    # 【重要】壊れたファイルのセキュリティチェックを「無効化(false)」し、安定版(8.2.1)を使用
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '8.2.1'
+        validate-wrappers: false
 
-    # 壊れたファイルを無視して、強制的にビルドを実行する（数時間前と同じ）
+    # 壊れたファイル(gradlew)は一切触らず、安全なコマンド(gradle)でビルド
     - name: Build Debug APK
       working-directory: ./android
-      run: ./gradlew assembleDebug
+      run: gradle assembleDebug
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
