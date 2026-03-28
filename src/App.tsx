@@ -17,6 +17,14 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 
 interface OverlayPlugin {
   startOverlay(): Promise<void>;
+  updateSettings(options: {
+    targetKeyword: string;
+    isAutoBattleEnabled: boolean;
+    tapOffsetX: number;
+    tapOffsetY: number;
+    scanInterval: number;
+    enableResultDetection: boolean;
+  }): Promise<void>;
 }
 
 const OverlayPlugin = registerPlugin<OverlayPlugin>('OverlayPlugin');
@@ -187,6 +195,20 @@ export default function App() {
   const isProcessingRef = useRef(false);
   const lastProcessedTimeRef = useRef(0);
   const ocrTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Update Native Overlay Settings
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      OverlayPlugin.updateSettings({
+        targetKeyword: tapPriorities[0].label,
+        isAutoBattleEnabled: isAutoBattleEnabled,
+        tapOffsetX: 0,
+        tapOffsetY: targetTapOffset,
+        scanInterval: scanInterval,
+        enableResultDetection: enableResultDetection,
+      }).catch(e => console.error('Failed to update overlay settings', e));
+    }
+  }, [isAutoBattleEnabled, targetTapOffset, tapPriorities, scanInterval, enableResultDetection]);
 
   // Initialize Tesseract Worker
   useEffect(() => {
@@ -1149,6 +1171,15 @@ export default function App() {
                       onClick={async () => {
                         try {
                           await OverlayPlugin.startOverlay();
+                          // オーバーレイ起動後に現在の設定を送信
+                          await OverlayPlugin.updateSettings({
+                            targetKeyword: tapPriorities[0].label,
+                            isAutoBattleEnabled: isAutoBattleEnabled,
+                            tapOffsetX: 0,
+                            tapOffsetY: targetTapOffset,
+                            scanInterval: scanInterval,
+                            enableResultDetection: enableResultDetection,
+                          });
                         } catch (e) {
                           console.error('Failed to start overlay', e);
                         }
@@ -1203,29 +1234,35 @@ export default function App() {
                     <div className="bg-[#111] p-3 rounded-lg border border-[#333]">
                       <div className="flex items-center justify-between mb-2">
                         <label className="text-xs text-gray-300 font-bold">WALKモード判定位置の調整</label>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => {
-                              setShowSettings(false);
-                              runAutoCalibration();
-                            }}
-                            className="px-2 py-1 bg-emerald-900/40 text-emerald-400 border border-emerald-800 rounded text-[10px] font-bold hover:bg-emerald-900/60 transition-colors"
-                          >
-                            OCR自動設定
-                          </button>
-                          <button 
-                            onClick={() => {
-                              setShowSettings(false);
-                              setCalibrationState('UNLOCK_BTN');
-                            }}
-                            className="px-2 py-1 bg-blue-900/40 text-blue-400 border border-blue-800 rounded text-[10px] font-bold hover:bg-blue-900/60 transition-colors"
-                          >
-                            手動設定
-                          </button>
-                        </div>
+                        {!Capacitor.isNativePlatform() ? (
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => {
+                                setShowSettings(false);
+                                runAutoCalibration();
+                              }}
+                              className="px-2 py-1 bg-emerald-900/40 text-emerald-400 border border-emerald-800 rounded text-[10px] font-bold hover:bg-emerald-900/60 transition-colors"
+                            >
+                              OCR自動設定
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setShowSettings(false);
+                                setCalibrationState('UNLOCK_BTN');
+                              }}
+                              className="px-2 py-1 bg-blue-900/40 text-blue-400 border border-blue-800 rounded text-[10px] font-bold hover:bg-blue-900/60 transition-colors"
+                            >
+                              手動設定
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-emerald-400 border border-emerald-800 bg-emerald-900/40 px-2 py-1 rounded">ネイティブ連携中</span>
+                        )}
                       </div>
                       <p className="text-[10px] text-gray-500 leading-relaxed">
-                        ゲーム画面の「解除する」ボタンの位置と色を記憶させ、自動戦闘の監視精度を100%にします。
+                        {Capacitor.isNativePlatform() 
+                          ? 'Android版では、オーバーレイ上の「Set Scan Area」「Set Tap Point」ボタンを使用して判定位置を調整してください。'
+                          : 'ゲーム画面の「解除する」ボタンの位置と色を記憶させ、自動戦闘の監視精度を100%にします。'}
                       </p>
                     </div>
 
@@ -1233,18 +1270,24 @@ export default function App() {
                     <div className="bg-[#111] p-3 rounded-lg border border-[#333]">
                       <div className="flex items-center justify-between mb-2">
                         <label className="text-xs text-gray-300 font-bold">キャラクター位置＆サークル範囲</label>
-                        <button 
-                          onClick={() => {
-                            setShowSettings(false);
-                            setCalibrationState('CHAR_CENTER');
-                          }}
-                          className="px-3 py-1 bg-purple-900/40 text-purple-400 border border-purple-800 rounded text-xs font-bold hover:bg-purple-900/60 transition-colors"
-                        >
-                          設定する
-                        </button>
+                        {!Capacitor.isNativePlatform() ? (
+                          <button 
+                            onClick={() => {
+                              setShowSettings(false);
+                              setCalibrationState('CHAR_CENTER');
+                            }}
+                            className="px-3 py-1 bg-purple-900/40 text-purple-400 border border-purple-800 rounded text-xs font-bold hover:bg-purple-900/60 transition-colors"
+                          >
+                            設定する
+                          </button>
+                        ) : (
+                          <span className="text-[10px] text-purple-400 border border-purple-800 bg-purple-900/40 px-2 py-1 rounded">ネイティブ連携中</span>
+                        )}
                       </div>
                       <p className="text-[10px] text-gray-500 leading-relaxed mb-3">
-                        キャラクターの足元と、サークルの大きさを記憶させます。
+                        {Capacitor.isNativePlatform()
+                          ? 'Android版では、オーバーレイ上の設定からタップ位置を調整してください。'
+                          : 'キャラクターの足元と、サークルの大きさを記憶させます。'}
                       </p>
                       
                       <div className="space-y-2 border-t border-[#222] pt-3">

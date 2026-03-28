@@ -72,3 +72,21 @@ try {
 } catch (Exception e) {
     logger.warn("capacitor.build.gradle not found, skipping plugin inclusion")
 }
+
+task downloadTessData {
+    def destDir = file('src/main/assets/tessdata')
+    def destFile = file("$destDir/jpn.traineddata")
+    
+    doLast {
+        if (!destFile.exists()) {
+            destDir.mkdirs()
+            println "Downloading jpn.traineddata..."
+            new URL('https://github.com/tesseract-ocr/tessdata_fast/raw/main/jpn.traineddata').withInputStream { i ->
+                destFile.withOutputStream { it << i }
+            }
+            println "Download complete."
+        }
+    }
+}
+
+preBuild.dependsOn downloadTessData

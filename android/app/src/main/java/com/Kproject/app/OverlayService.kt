@@ -5,8 +5,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -78,8 +80,32 @@ class OverlayService : Service() {
     private var totalKills = 0
     private var totalExp = 0
     private var targetKeyword = "！"
+    private var tapOffsetX = 0f
+    private var tapOffsetY = 0f
+    private var scanInterval = 3000L
+    private var enableResultDetection = true
 
     private val handler = Handler(Looper.getMainLooper())
+
+    private val settingsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "com.Kproject.app.UPDATE_SETTINGS") {
+                targetKeyword = intent.getStringExtra("targetKeyword") ?: "！"
+                isAutoBattleEnabled = intent.getBooleanExtra("isAutoBattleEnabled", true)
+                tapOffsetX = intent.getFloatExtra("tapOffsetX", 0f)
+                tapOffsetY = intent.getFloatExtra("tapOffsetY", 0f)
+                scanInterval = intent.getIntExtra("scanInterval", 3000).toLong()
+                enableResultDetection = intent.getBooleanExtra("enableResultDetection", true)
+                
+                // Update UI
+                overlayView.findViewById<TextView>(R.id.tv_target_word).text = "TARGET: $targetKeyword"
+                val btnAutoBattle = overlayView.findViewById<TextView>(R.id.btn_auto_battle)
+                btnAutoBattle.text = if (isAutoBattleEnabled) "Auto Battle: ON" else "Auto Battle: OFF"
+                btnAutoBattle.setBackgroundResource(if (isAutoBattleEnabled) R.drawable.bg_button_active else R.drawable.bg_button_inactive)
+                btnAutoBattle.setTextColor(if (isAutoBattleEnabled) Color.parseColor("#10B981") else Color.parseColor("#9CA3AF"))
+            }
+        }
+    }
 
     private val timeUpdater = object : Runnable {
         override fun run() {
@@ -90,14 +116,14 @@ class OverlayService : Service() {
 
     private val ocrUpdater = object : Runnable {
         override fun run() {
-            if (isAutoBattleEnabled && isOcrInitialized) {
+            if (isAutoBattleEnabled && isOcrInitialized && enableResultDetection) {
                 try {
                     captureAndRecognize()
                 } catch (e: Exception) {
                     Log.e(TAG, "OCR Error", e)
                 }
             }
-            handler.postDelayed(this, 3000)
+            handler.postDelayed(this, scanInterval)
         }
     }
 
@@ -105,6 +131,13 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(settingsReceiver, IntentFilter("com.Kproject.app.UPDATE_SETTINGS"), Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(settingsReceiver, IntentFilter("com.Kproject.app.UPDATE_SETTINGS"))
+        }
+
         startForegroundServiceWithNotification()
 
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -147,6 +180,23 @@ class OverlayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null) {
+            // 初期設定の受け取り
+            if (intent.hasExtra("targetKeyword")) {
+                targetKeyword = intent.getStringExtra("targetKeyword") ?: "！"
+                isAutoBattleEnabled = intent.getBooleanExtra("isAutoBattleEnabled", true)
+                tapOffsetX = intent.getFloatExtra("tapOffsetX", 0f)
+                tapOffsetY = intent.getFloatExtra("tapOffsetY", 0f)
+                scanInterval = intent.getIntExtra("scanInterval", 3000).toLong()
+                enableResultDetection = intent.getBooleanExtra("enableResultDetection", true)
+                
+                // Update UI immediately
+                overlayView.findViewById<TextView>(R.id.tv_target_word).text = "TARGET: $targetKeyword"
+                val btnAutoBattle = overlayView.findViewById<TextView>(R.id.btn_auto_battle)
+                btnAutoBattle.text = if (isAutoBattleEnabled) "Auto Battle: ON" else "Auto Battle: OFF"
+                btnAutoBattle.setBackgroundResource(if (isAutoBattleEnabled) R.drawable.bg_button_active else R.drawable.bg_button_inactive)
+                btnAutoBattle.setTextColor(if (isAutoBattleEnabled) Color.parseColor("#10B981") else Color.parseColor("#9CA3AF"))
+            }
+
             val resultCode = intent.getIntExtra("EXTRA_RESULT_CODE", 0)
             val resultData = intent.getParcelableExtra<Intent>("EXTRA_RESULT_DATA")
             if (resultCode != 0 && resultData != null) {
@@ -208,14 +258,14 @@ class OverlayService : Service() {
                     overlayView.findViewById<TextView>(R.id.tv_exp).text = totalExp.toString()
 
                     val tapX = if (isTapPointVisible && tapPointParams != null) {
-                        tapPointParams!!.x.toFloat() + 20
+                        tapPointParams!!.x.toFloat() + 20 + (screenWidth * (tapOffsetX / 100f))
                     } else {
-                        screenWidth / 2f
+                        screenWidth / 2f + (screenWidth * (tapOffsetX / 100f))
                     }
                     val tapY = if (isTapPointVisible && tapPointParams != null) {
-                        tapPointParams!!.y.toFloat() + 20
+                        tapPointParams!!.y.toFloat() + 20 + (screenHeight * (tapOffsetY / 100f))
                     } else {
-                        screenHeight / 2f
+                        screenHeight / 2f + (screenHeight * (tapOffsetY / 100f))
                     }
                     AutoTapService.instance?.performTap(tapX, tapY)
                 }
@@ -409,6 +459,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        unregisterReceiver(settingsReceiver)
         if (::overlayView.isInitialized) windowManager.removeView(overlayView)
         scanAreaView?.let { windowManager.removeView(it) }
         tapPointView?.let { windowManager.removeView(it) }
