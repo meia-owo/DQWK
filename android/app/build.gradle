@@ -3,11 +3,11 @@ apply plugin: 'kotlin-android'
 
 android {
     namespace = "com.Kproject.app"
-    compileSdk 36
+    compileSdk = 36
     defaultConfig {
         applicationId "com.Kproject.app"
-        minSdkVersion 24
-        targetSdkVersion 36
+        minSdkVersion = 24
+        targetSdkVersion = 36
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
