@@ -14,6 +14,10 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // 【重要】Capacitor のローカルライブラリを探すための設定
+        maven {
+            url "$rootDir/../node_modules/@capacitor/android/capacitor/src/main/libs"
+        }
     }
 }
 
