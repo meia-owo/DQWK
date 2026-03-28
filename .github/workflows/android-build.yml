@@ -1,0 +1,57 @@
+name: Android Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+
+    - name: Install Dependencies
+      run: npm install
+
+    - name: Build Web App
+      run: npm run build
+
+    # 【Androidアプリへの変換プロセス 1】WebのコードをAndroidプロジェクトに同期
+    - name: Sync Capacitor (Web to Android)
+      run: npx cap sync android
+
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+
+    # 破損エラーを回避するため、公式のGradleセットアップを使用
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '8.14.3'
+
+    # 【Androidアプリへの変換プロセス 2】実際にAPK（Androidアプリ）を作成
+    - name: Build Debug APK (Convert to Android App)
+      working-directory: ./android
+      # 破損しやすい ./gradlew は使わず、正規の gradle コマンドで直接ビルドします
+      run: gradle assembleDebug
+
+    # 【成果物の取得】完成したAPKをダウンロード可能にする
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-debug
+        path: android/app/build/outputs/apk/debug/app-debug.apk
