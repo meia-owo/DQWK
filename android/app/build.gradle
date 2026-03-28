@@ -6,7 +6,7 @@ android {
 
     defaultConfig {
         applicationId "com.example.app"
-        minSdk 24  // 22 から 24 に上げました
+        minSdk 24
         targetSdk 36
         versionCode 1
         versionName "1.0"
@@ -44,13 +44,4 @@ dependencies {
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation project(':capacitor-android')
     implementation project(':capacitor-cordova-android-plugins')
-}
-
-try {
-    def servicesJSON = file('google-services.json')
-    if (servicesJSON.text) {
-        apply plugin: 'com.google.gms.google-services'
-    }
-} catch(Exception e) {
-    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }
