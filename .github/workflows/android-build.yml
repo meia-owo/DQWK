@@ -36,17 +36,16 @@ jobs:
         java-version: '21'
         distribution: 'temurin'
 
-    # 【重要】壊れたファイルのセキュリティチェックを「無効化(false)」し、安定版(8.2.1)を使用
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v4
       with:
         gradle-version: '8.2.1'
         validate-wrappers: false
 
-    # 壊れたファイル(gradlew)は一切触らず、安全なコマンド(gradle)でビルド
+    # 【修正箇所】壊れたキャッシュを無視し、強制的に再ダウンロードしてビルドする
     - name: Build Debug APK
       working-directory: ./android
-      run: gradle assembleDebug
+      run: gradle assembleDebug --refresh-dependencies --no-build-cache
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
