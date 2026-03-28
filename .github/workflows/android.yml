@@ -1,0 +1,94 @@
+name: System Audit & Build Test
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Environment Info
+        run: |
+          echo "--- Java Version ---"
+          java -version
+          echo "--- Gradle Version ---"
+          gradle -v
+          echo "--- Node Version ---"
+          node -v
+
+      - name: Install & Sync
+        run: |
+          npm install
+          npm run build
+          npx cap sync android
+
+      - name: File Structure Audit
+        run: |
+          echo "--- Directory Structure (android) ---"
+          ls -R android
+          
+          echo "--- Checking for build.gradle files ---"
+          find android -name "build.gradle"
+          
+          echo "--- Content of android/app/build.gradle (Pre-Fix) ---"
+          if [ -f android/app/build.gradle ]; then
+            cat android/app/build.gradle
+          else
+            echo "ERROR: android/app/build.gradle NOT FOUND"
+          fi
+
+      - name: Attempt Fix & Verify
+        run: |
+          # 物理的にファイルを生成して、その直後に中身を確認します
+          mkdir -p android/app
+          cat <<EOF > android/app/build.gradle
+          apply plugin: 'com.android.application'
+          apply plugin: 'kotlin-android'
+
+          android {
+              namespace "com.Kproject.app"
+              compileSdk 34
+              defaultConfig {
+                  applicationId "com.Kproject.app"
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+          }
+          EOF
+          
+          echo "--- Content of android/app/build.gradle (Post-Fix) ---"
+          cat android/app/build.gradle
+
+      - name: Build Attempt
+        run: |
+          cd android
+          # システム標準の gradle を使用
+          gradle assembleDebug --stacktrace
+
+      - name: Upload Logs on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            android/app/build/reports
+            android/app/build/outputs/logs
