@@ -27,7 +27,7 @@ jobs:
     - name: Build Web App
       run: npm run build
 
-    - name: Sync Capacitor (Web to Android)
+    - name: Sync Capacitor
       run: npx cap sync android
 
     - name: Set up JDK 21
@@ -35,16 +35,16 @@ jobs:
       with:
         java-version: '21'
         distribution: 'temurin'
+        cache: gradle
 
-    # 数時間前に成功していた安定版（8.2.1）を直接指定して、壊れたjarファイルを回避します
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v4
-      with:
-        gradle-version: '8.2.1'
+    # 壊れたファイルを無視して、強制的に実行権限を付与する（数時間前と同じ）
+    - name: Grant execute permission for gradlew
+      run: chmod +x android/gradlew
 
+    # 壊れたファイルを無視して、強制的にビルドを実行する（数時間前と同じ）
     - name: Build Debug APK
       working-directory: ./android
-      run: gradle assembleDebug
+      run: ./gradlew assembleDebug
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
