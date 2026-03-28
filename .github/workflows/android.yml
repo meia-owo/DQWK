@@ -34,14 +34,18 @@ jobs:
       - name: Capacitor Sync
         run: npx cap sync android
 
+      - name: Check Gradle Files
+        run: |
+          ls -R android/
+          cat android/variables.gradle
+          cat android/app/build.gradle
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
       - name: Build Android APK
         run: |
           cd android
-          # ここで設定ファイルが正しく読み込まれているかチェックします
-          cat app/build.gradle
           gradle assembleDebug
 
       - name: Upload APK
