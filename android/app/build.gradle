@@ -3,16 +3,17 @@ apply plugin: 'kotlin-android'
 
 android {
     namespace "com.Kproject.app"
-    compileSdk 36
+    // ここで variables.gradle から設定を読み込みます
+    compileSdk rootProject.ext.compileSdkVersion
+    
     defaultConfig {
         applicationId "com.Kproject.app"
-        minSdkVersion 24
-        targetSdkVersion 36
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
-             // OCR用の学習データを圧縮しないように設定
              noCompress 'traineddata'
         }
     }
@@ -34,13 +35,13 @@ android {
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
     implementation "com.getcapacitor:android-bridge:$capacitorApiVersion"
-    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation 'androidx.constraintlayout:constraintlayout:2.2.0'
     implementation 'com.google.android.material:material:1.12.0'
     implementation 'com.rmtheis:tess-two:9.1.0'
-    testImplementation 'junit:junit:4.13.2'
-    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
-    androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
 }
 
 try {
