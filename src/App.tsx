@@ -182,10 +182,11 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // OCR States
-  const [ocrStatus, setOcrStatus] = useState<'OFF' | '初期化中' | '待機中' | '解析中' | 'クールダウン'>('OFF');
+  const [ocrStatus, setOcrStatus] = useState<'OFF' | '初期化中' | '待機中' | '解析中' | 'クールダウン' | 'エラー'>('OFF');
   const workerRef = useRef<Worker | null>(null);
   const isProcessingRef = useRef(false);
   const lastProcessedTimeRef = useRef(0);
+  const ocrTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Initialize Tesseract Worker
   useEffect(() => {
@@ -197,7 +198,16 @@ export default function App() {
       }
       setOcrStatus('初期化中');
       try {
-        const worker = await createWorker('jpn');
+        // 既存のワーカーがあれば終了させる
+        if (workerRef.current) {
+          await workerRef.current.terminate();
+          workerRef.current = null;
+        }
+        
+        const worker = await createWorker('jpn', 1, {
+          logger: m => console.log(m), // 進行状況をログに出力
+        });
+        
         if (isMounted) {
           workerRef.current = worker;
           setOcrStatus('待機中');
@@ -206,17 +216,11 @@ export default function App() {
         }
       } catch (e) {
         console.error("OCR Init Error", e);
-        if (isMounted) setOcrStatus('OFF');
+        if (isMounted) setOcrStatus('エラー');
       }
     };
 
-    if (enableResultDetection && !workerRef.current) {
-      initWorker();
-    } else if (!enableResultDetection && workerRef.current) {
-      workerRef.current.terminate();
-      workerRef.current = null;
-      setOcrStatus('OFF');
-    }
+    initWorker();
 
     return () => {
       isMounted = false;
@@ -224,6 +228,7 @@ export default function App() {
         workerRef.current.terminate();
         workerRef.current = null;
       }
+      if (ocrTimeoutRef.current) clearTimeout(ocrTimeoutRef.current);
     };
   }, [enableResultDetection]);
 
@@ -435,6 +440,16 @@ export default function App() {
     isProcessingRef.current = true;
     setOcrStatus('解析中');
 
+    // タイムアウト設定 (5秒以上かかったら強制終了)
+    if (ocrTimeoutRef.current) clearTimeout(ocrTimeoutRef.current);
+    ocrTimeoutRef.current = setTimeout(() => {
+      if (isProcessingRef.current) {
+        console.warn("OCR Timeout reached. Resetting...");
+        isProcessingRef.current = false;
+        setOcrStatus('待機中');
+      }
+    }, 5000);
+
     try {
       const vw = video.videoWidth;
       const vh = video.videoHeight;
@@ -445,7 +460,8 @@ export default function App() {
         const fieldRect = { x: vw * 0.1, y: vh * 0.2, w: vw * 0.8, h: vh * 0.6 };
         const fieldCanvas = captureAndCrop(video, fieldRect);
         if (fieldCanvas) {
-          const { data: { text: fieldText } } = await workerRef.current.recognize(fieldCanvas);
+          const result = await workerRef.current.recognize(fieldCanvas);
+          const fieldText = result.data.text;
           
           // 誤読対策: "！", "!", "i", "l", "1", "|" を許容
           const exclamationRegex = /[！!il1|]/;
@@ -458,65 +474,64 @@ export default function App() {
               const tapY = charCenterPos.y + (targetTapOffset / 100);
               simulateTap(tapX, tapY);
               lastProcessedTimeRef.current = Date.now();
+              
+              // キャンバス解放のヒント
+              fieldCanvas.width = 0;
+              fieldCanvas.height = 0;
               return;
             }
           }
+          fieldCanvas.width = 0;
+          fieldCanvas.height = 0;
         }
       }
 
       // 2. Check Message Box (Average EXP)
-      // Based on screenshot: Message box is roughly y: 50% to 70%, x: 10% to 90%
       const msgRect = { x: vw * 0.1, y: vh * 0.5, w: vw * 0.8, h: vh * 0.2 };
       const msgCanvas = captureAndCrop(video, msgRect);
       
       if (msgCanvas) {
-        const { data: { text: msgText } } = await workerRef.current.recognize(msgCanvas);
+        const result = await workerRef.current.recognize(msgCanvas);
+        const msgText = result.data.text;
         
-        // Look for "11638の 経験値を かくとく！" or similar
-        // Regex: extract numbers before "経験値" or "経" or "験" or "値"
         const expMatch = msgText.match(/(\d+)[^\d]*(?:経|験|値)/);
 
         if (expMatch) {
           const avgExp = parseInt(expMatch[1], 10);
           setAverageExp(avgExp);
           
-          // 2. We found a result screen! Now scan characters.
-          // Based on screenshot: Character EXP is roughly y: 65% to 75%, split into 4 columns
           const charExps = [0, 0, 0, 0];
           const charWidth = vw * 0.25;
           const charY = vh * 0.65;
           const charH = vh * 0.1;
 
-          // In Eco Mode, we skip individual character scans and just use the average to save battery/processing
           if (!isEcoMode) {
             for (let i = 0; i < 4; i++) {
                const charRect = { x: charWidth * i, y: charY, w: charWidth, h: charH };
                const charCanvas = captureAndCrop(video, charRect);
                if (charCanvas) {
-                  const { data: { text: charText } } = await workerRef.current.recognize(charCanvas);
-                  // Look for "EXP+11638" or similar
+                  const charResult = await workerRef.current.recognize(charCanvas);
+                  const charText = charResult.data.text;
                   const charExpMatch = charText.match(/(?:EXP|\+|P)[^\d]*(\d+)/i) || charText.match(/(\d+)/);
                   
                   if (charExpMatch) {
                      charExps[i] = parseInt(charExpMatch[1], 10);
                   } else {
-                     // Fallback to average if OCR fails for this specific character
                      charExps[i] = avgExp; 
                   }
+                  charCanvas.width = 0;
+                  charCanvas.height = 0;
                }
             }
           } else {
-             // Eco mode: just use average for everyone
              for (let i = 0; i < 4; i++) charExps[i] = avgExp;
           }
 
-          // 3. Apply the results
           setTotalKills(prev => {
-            const newKills = prev + 1; // 1 battle = 1 kill for simplicity
-            
+            const newKills = prev + 1;
             setParty(prevParty => {
               const newParty = prevParty.map((member, index) => {
-                const expGained = charExps[index] || avgExp; // Use specific or fallback
+                const expGained = charExps[index] || avgExp;
                 let newExp = member.currentExp + expGained;
                 let newLevel = member.level;
                 let newNextExp = member.nextExp;
@@ -530,11 +545,9 @@ export default function App() {
                 return { ...member, level: newLevel, currentExp: newExp, nextExp: newNextExp };
               });
 
-              // Save log to localStorage
               try {
                 const logsStr = localStorage.getItem('dq_macro_logs');
                 let logs = logsStr ? JSON.parse(logsStr) : [];
-                
                 logs.push({
                   timestamp: new Date().toLocaleString('ja-JP'),
                   char1Name: newParty[0]?.name || '',
@@ -547,26 +560,26 @@ export default function App() {
                   char4Exp: newParty[3]?.currentExp || 0,
                   totalKills: newKills
                 });
-                
                 if (logs.length > 1000) logs = logs.slice(logs.length - 1000);
                 localStorage.setItem('dq_macro_logs', JSON.stringify(logs));
               } catch (e) {
                 console.error('Failed to save log', e);
               }
-
               return newParty;
             });
-            
             return newKills;
           });
           
           setTotalExp(prev => prev + charExps.reduce((a, b) => a + b, 0));
           lastProcessedTimeRef.current = Date.now();
         }
+        msgCanvas.width = 0;
+        msgCanvas.height = 0;
       }
     } catch (e) {
       console.error("OCR Error", e);
     } finally {
+      if (ocrTimeoutRef.current) clearTimeout(ocrTimeoutRef.current);
       isProcessingRef.current = false;
       if (Date.now() - lastProcessedTimeRef.current < 10000) {
         setOcrStatus('クールダウン');
