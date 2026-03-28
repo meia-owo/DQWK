@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">KAI Auto Battle</string>
+    <string name="title_activity_main">KAI Auto Battle</string>
+    <string name="package_name">com.Kproject.app</string>
+    <string name="custom_url_scheme">com.Kproject.app</string>
+    <string name="accessibility_service_description">KAI Auto Battle の自動タップ機能を有効にします。</string>
+</resources>
