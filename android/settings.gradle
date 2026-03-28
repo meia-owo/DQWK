@@ -1,5 +1,5 @@
 include ':app'
 
-// 先に include してから、そのプロジェクトの場所を指定するのが Gradle の正解です
-include ':capacitor-android'
-project(':capacitor-android').projectDir = new File(settingsDir, '../node_modules/@capacitor/android/capacitor')
+// Capacitor が自動生成する設定ファイルを読み込むようにします
+// これにより、各プラグインが正しく include されます
+apply from: 'capacitor.settings.gradle'
