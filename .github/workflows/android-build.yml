@@ -1,0 +1,54 @@
+name: Android Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        # npmのキャッシュは安全なので残します
+
+    - name: Install Dependencies
+      run: npm install
+
+    - name: Build Web App
+      run: npm run build
+
+    - name: Sync Capacitor
+      run: npx cap sync android
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        # 【重要】過去のゴミを読み込まないよう、あえてGradleのキャッシュ設定を記述しません
+
+    # 【重要】エラーの元凶だった「Setup Gradle」のステップを完全に削除しました
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x android/gradlew
+
+    # GitHubのツールに頼らず、プロジェクト内蔵の標準コマンド(gradlew)だけでビルドします
+    - name: Build Debug APK
+      working-directory: ./android
+      run: ./gradlew assembleDebug --no-daemon
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-debug
+        path: android/app/build/outputs/apk/debug/app-debug.apk
