@@ -41,7 +41,7 @@ class MainActivity : BridgeActivity() {
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:" + context.packageName)
                 )
-                startActivityForResult(call, intent, REQUEST_OVERLAY_PERMISSION)
+                this@MainActivity.startActivityForResult(intent, REQUEST_OVERLAY_PERMISSION)
             } else {
                 startMediaProjection(call)
             }
@@ -70,8 +70,9 @@ class MainActivity : BridgeActivity() {
     }
 
     private fun startMediaProjection(call: PluginCall) {
+        pendingCall = call
         val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        startActivityForResult(call, manager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
+        startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
