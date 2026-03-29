@@ -14,6 +14,12 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # 修正ポイント1: Node.js 22 を明示的にセットアップします
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -26,7 +32,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '8.2.1' # 安定版のGradle 8.2.1を指定
+          gradle-version: '8.2.1'
 
       - name: Install Dependencies
         run: npm install
@@ -39,7 +45,7 @@ jobs:
 
       - name: Build Debug APK
         working-directory: ./android
-        # 修正ポイント: -Pフラグを追加して、クラッシュの元凶である統計収集サービスを強制停止します
+        # 修正ポイント2: 統計収集サービスを強制停止するフラグを維持
         run: gradle assembleDebug -Pkotlin.plugin.statistics.enabled=false -Pkotlin.statistics.enabled=false --no-daemon --no-build-cache
 
       - name: Upload APK
