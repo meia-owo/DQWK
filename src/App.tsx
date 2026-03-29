@@ -6,25 +6,70 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, Reorder } from 'motion/react';
 import { 
-  Activity, Battery, BatteryMedium, BatteryWarning,
+  Activity, Battery, BatteryMedium, BatteryWarning, BatteryCharging,
   Thermometer, ThermometerSun, Settings, Play, Square, 
   Leaf, Scan, GripHorizontal, GripVertical, Download, ScanText,
   ChevronDown, ChevronRight, HelpCircle, Monitor, AlertTriangle,
-  LocateFixed, X
+  LocateFixed, X, Terminal, ShieldCheck, ShieldAlert, Shield,
+  Wifi, WifiOff, Signal, SignalLow
 } from 'lucide-react';
 import { createWorker, Worker } from 'tesseract.js';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
 interface OverlayPlugin {
   startOverlay(): Promise<void>;
-  updateSettings(options: {
-    targetKeyword: string;
+  stopOverlay(): Promise<void>;
+  updateSettings(options: { 
+    targetKeywords: string; 
     isAutoBattleEnabled: boolean;
+    isBerserkerMode: boolean;
     tapOffsetX: number;
     tapOffsetY: number;
     scanInterval: number;
     enableResultDetection: boolean;
+    ocrRetryCount?: number;
+    ocrWaitTime?: number;
+    enableAnchorSearch?: boolean;
+    wideScanArea?: number;
+    enableRegexFilter?: boolean;
+    enableDictCorrection?: boolean;
+    pauseScanOnBattle?: boolean;
+    autoBrightness?: boolean;
+    targetPot?: boolean;
+    targetHokora?: boolean;
+    enablePartyScan?: boolean;
+    unlockBtnX?: number;
+    unlockBtnY?: number;
+    charCenterX?: number;
+    charCenterY?: number;
+    circleRadius?: number;
+    berserkerIconX?: number;
+    berserkerIconY?: number;
+    berserkerItemX?: number;
+    berserkerItemY?: number;
+    berserkerInterval?: number;
+    unlockBtnColor?: number[];
+    pullMargin?: number;
+    appStatus?: string;
   }): Promise<void>;
+  takeScreenshot(): Promise<{ base64: string }>;
+  performTap(options: { x: number; y: number }): Promise<void>;
+  getStatus(): Promise<{
+    overlayPermission: boolean;
+    accessibilityService: boolean;
+    isServiceRunning: boolean;
+    batteryOptimizationExempt: boolean;
+    cameraPermission: boolean;
+    network: { type: string; strength: number };
+  }>;
+  requestPermission(options: { type: 'overlay' | 'accessibility' | 'batteryOptimization' | 'camera' | 'screenCapture' }): Promise<void>;
+  addListener(eventName: 'batteryStatusUpdate', listenerFunc: (data: { level: number; isCharging: boolean; temperature: number }) => void): Promise<any>;
+  addListener(eventName: 'statsUpdate', listenerFunc: (data: { kills: number; exp: number; avgExp: number; log?: string }) => void): Promise<any>;
+  addListener(eventName: 'logUpdate', listenerFunc: (data: { message: string; type: string; image?: string }) => void): Promise<any>;
+  addListener(eventName: 'toastMessage', listenerFunc: (data: { message: string; type: string }) => void): Promise<any>;
+  addListener(eventName: 'scanAreaUpdate', listenerFunc: (data: { x: number; y: number; w: number; h: number }) => void): Promise<any>;
+  addListener(eventName: 'toggleStateUpdate', listenerFunc: (data: { isAutoBattleEnabled: boolean }) => void): Promise<any>;
+  removeAllListeners(): Promise<void>;
 }
 
 const OverlayPlugin = registerPlugin<OverlayPlugin>('OverlayPlugin');
@@ -67,9 +112,18 @@ export default function App() {
   const [isAutoRun, setIsAutoRun] = useState(false);
   const [isEcoMode, setIsEcoMode] = useState(false);
   const [scanInterval, setScanInterval] = useState(3);
-  const [battery, setBattery] = useState(85);
+  const [battery, setBattery] = useState(100);
+  const [isCharging, setIsCharging] = useState(false);
+  const [batteryTemp, setBatteryTemp] = useState(0);
+  const [networkStatus, setNetworkStatus] = useState({ type: 'none', strength: 0 });
+  const [ocrPreviewImage, setOcrPreviewImage] = useState<string | null>(null);
+  const [autoBrightness, setAutoBrightness] = useState(() => localStorage.getItem('autoBrightness') === 'true');
+  const [currentStatus, setCurrentStatus] = useState('待機中');
+  const [toasts, setToasts] = useState<{ id: string; message: string; type: string }[]>([]);
   const [tempCounter, setTempCounter] = useState(0);
   const [temperature, setTemperature] = useState<'Normal' | 'Warm' | 'Hot'>('Normal');
+  
+  const [scanArea, setScanArea] = useState({ x: 50, y: 150, w: 400, h: 200 });
   
   // New Control Specs
   const [ocrRetryCount, setOcrRetryCount] = useState(3);
@@ -119,7 +173,15 @@ export default function App() {
   // Statistics
   const [totalKills, setTotalKills] = useState(0);
   const [totalExp, setTotalExp] = useState(0);
-  const [averageExp, setAverageExp] = useState(0);
+  const [avgExp, setAvgExp] = useState(0);
+  const [logs, setLogs] = useState<{id: string, message: string, type: string, time: string}[]>([]);
+  const [permissionStatus, setPermissionStatus] = useState({
+    overlay: false,
+    accessibility: false,
+    service: false,
+    batteryOptimization: false,
+    camera: false
+  });
   const [startTime] = useState(Date.now());
   
   // Party State
@@ -186,8 +248,13 @@ export default function App() {
 
   // Overlay & Capture States
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [screenshotBase64, setScreenshotBase64] = useState<string | null>(null);
+  const [captureSource, setCaptureSource] = useState<'screen' | 'camera'>('screen');
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [availableDevices, setAvailableDevices] = useState<MediaDeviceInfo[]>([]);
   const [showCaptureWarning, setShowCaptureWarning] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
 
   // OCR States
   const [ocrStatus, setOcrStatus] = useState<'OFF' | '初期化中' | '待機中' | '解析中' | 'クールダウン' | 'エラー'>('OFF');
@@ -196,19 +263,170 @@ export default function App() {
   const lastProcessedTimeRef = useRef(0);
   const ocrTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const addLog = (message: string, type: string = 'info') => {
+    const newLog = {
+      id: Math.random().toString(36).substr(2, 9),
+      message,
+      type,
+      time: new Date().toLocaleTimeString()
+    };
+    setLogs(prev => [newLog, ...prev].slice(0, 100));
+  };
+
+  // Native Event Listeners
+  useEffect(() => {
+    let batteryListener: any = null;
+    let statsListener: any = null;
+    let logListener: any = null;
+
+    const setupListeners = async () => {
+      if (Capacitor.isNativePlatform()) {
+        try {
+          batteryListener = await OverlayPlugin.addListener('batteryStatusUpdate', (data) => {
+            setBattery(data.level);
+            setIsCharging(data.isCharging);
+            setBatteryTemp(data.temperature);
+          });
+
+          statsListener = await OverlayPlugin.addListener('statsUpdate', (data) => {
+            setTotalKills(data.kills);
+            setTotalExp(data.exp);
+            setAvgExp(data.avgExp);
+            if (data.log) {
+              addLog(data.log, 'info');
+              setCurrentStatus(data.log);
+            }
+          });
+
+          logListener = await OverlayPlugin.addListener('logUpdate', (data) => {
+            if (data.type === 'ocr_preview' && data.image) {
+              setOcrPreviewImage(`data:image/png;base64,${data.image}`);
+            } else {
+              addLog(data.message, data.type);
+              setCurrentStatus(data.message);
+            }
+          });
+
+          const toastListener = await OverlayPlugin.addListener('toastMessage', (data) => {
+            const id = Math.random().toString(36).substr(2, 9);
+            setToasts(prev => [...prev, { id, message: data.message, type: data.type }]);
+            setTimeout(() => {
+              setToasts(prev => prev.filter(t => t.id !== id));
+            }, 3000);
+          });
+
+          const scanAreaListener = await OverlayPlugin.addListener('scanAreaUpdate', (data) => {
+            setScanArea({ x: data.x, y: data.y, w: data.w, h: data.h });
+          });
+
+          const toggleStateListener = await OverlayPlugin.addListener('toggleStateUpdate', (data) => {
+            setIsAutoBattleEnabled(data.isAutoBattleEnabled);
+          });
+
+          // Initial status check
+          const status = await OverlayPlugin.getStatus();
+          setPermissionStatus({
+            overlay: status.overlayPermission,
+            accessibility: status.accessibilityService,
+            service: status.isServiceRunning,
+            batteryOptimization: status.batteryOptimizationExempt,
+            camera: status.cameraPermission
+          });
+          setNetworkStatus(status.network);
+        } catch (e) {
+          console.error('Failed to setup native listeners', e);
+        }
+      }
+    };
+
+    setupListeners();
+
+    return () => {
+      batteryListener?.remove();
+      statsListener?.remove();
+      logListener?.remove();
+    };
+  }, []);
+
+  // Periodic status check
+  useInterval(async () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const status = await OverlayPlugin.getStatus();
+        setPermissionStatus({
+          overlay: status.overlayPermission,
+          accessibility: status.accessibilityService,
+          service: status.isServiceRunning,
+          camera: status.cameraPermission
+        });
+        setNetworkStatus(status.network);
+      } catch (e) {
+        console.error('Failed to get status', e);
+      }
+    }
+  }, 5000);
+
   // Update Native Overlay Settings
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
+      const enabledKeywords = tapPriorities
+        .filter(p => {
+          if (p.id === 'metal') return targetMetal;
+          if (p.id === 'kakutei') return targetKakutei;
+          if (p.id === 'koukaku') return targetKoukaku;
+          if (p.id === 'normal') return targetNormalEnemy;
+          if (p.id === 'strong') return targetStrongEnemy;
+          if (p.id === 'event') return targetEventPop;
+          if (p.id === 'pot') return targetPot;
+          if (p.id === 'hokora') return targetHokora;
+          if (p.id === 'other') return targetOther;
+          return false;
+        })
+        .map(p => p.label)
+        .join(',');
+
       OverlayPlugin.updateSettings({
-        targetKeyword: tapPriorities[0].label,
+        targetKeywords: enabledKeywords || '！',
         isAutoBattleEnabled: isAutoBattleEnabled,
         tapOffsetX: 0,
         tapOffsetY: targetTapOffset,
         scanInterval: scanInterval,
         enableResultDetection: enableResultDetection,
+        ocrRetryCount: ocrRetryCount,
+        ocrWaitTime: ocrWaitTime,
+        enableAnchorSearch: enableAnchorSearch,
+        wideScanArea: wideScanArea,
+        enableRegexFilter: enableRegexFilter,
+        enableDictCorrection: enableDictCorrection,
+        pauseScanOnBattle: pauseScanOnBattle,
+        autoBrightness: autoBrightness,
+        targetPot: targetPot,
+        targetHokora: targetHokora,
+        enablePartyScan: enablePartyScan,
+        unlockBtnX: unlockBtnPos.x,
+        unlockBtnY: unlockBtnPos.y,
+        charCenterX: charCenterPos.x,
+        charCenterY: charCenterPos.y,
+        circleRadius: circleRadius,
+        isBerserkerMode: isBerserkerMode,
+        berserkerIconX: berserkerIconPos.x,
+        berserkerIconY: berserkerIconPos.y,
+        berserkerItemX: berserkerItemPos.x,
+        berserkerItemY: berserkerItemPos.y,
+        berserkerInterval: 300000,
+        unlockBtnColor: [unlockBtnColor.r, unlockBtnColor.g, unlockBtnColor.b],
+        pullMargin: pullMargin,
+        appStatus: appStatus,
       }).catch(e => console.error('Failed to update overlay settings', e));
     }
-  }, [isAutoBattleEnabled, targetTapOffset, tapPriorities, scanInterval, enableResultDetection]);
+  }, [
+    isAutoBattleEnabled, targetTapOffset, tapPriorities, scanInterval, 
+    enableResultDetection, ocrRetryCount, ocrWaitTime, enableAnchorSearch,
+    wideScanArea, enableRegexFilter, enableDictCorrection, pauseScanOnBattle,
+    autoBrightness, targetMetal, targetKakutei, targetKoukaku, targetNormalEnemy,
+    targetStrongEnemy, targetEventPop, targetPot, targetHokora, targetOther,
+    unlockBtnPos, charCenterPos, circleRadius, enablePartyScan
+  ]);
 
   // Initialize Tesseract Worker
   useEffect(() => {
@@ -255,6 +473,22 @@ export default function App() {
   }, [enableResultDetection]);
 
   useEffect(() => {
+    const listDevices = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        setAvailableDevices(videoDevices);
+        if (videoDevices.length > 0 && !selectedDeviceId) {
+          setSelectedDeviceId(videoDevices[0].deviceId);
+        }
+      } catch (err) {
+        console.error('Failed to list devices', err);
+      }
+    };
+    listDevices();
+  }, [selectedDeviceId]);
+
+  useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
     }
@@ -262,20 +496,43 @@ export default function App() {
 
   const startCapture = async () => {
     try {
-      const mediaStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          displaySurface: 'window'
+      if (Capacitor.isNativePlatform()) {
+        const res = await OverlayPlugin.takeScreenshot();
+        if (res && res.base64) {
+          setScreenshotBase64(`data:image/jpeg;base64,${res.base64}`);
+          setShowCaptureWarning(false);
+        } else {
+          alert('スクリーンショットの取得に失敗しました。オーバーレイが開始されているか確認してください。');
         }
-      });
-      setStream(mediaStream);
-      setShowCaptureWarning(false);
-      
-      mediaStream.getVideoTracks()[0].onended = () => {
-        setStream(null);
-      };
+      } else {
+        let mediaStream: MediaStream;
+        if (captureSource === 'screen') {
+          mediaStream = await navigator.mediaDevices.getDisplayMedia({
+            video: {
+              displaySurface: 'window'
+            }
+          });
+        } else {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              frameRate: { ideal: 30 }
+            }
+          });
+        }
+        setStream(mediaStream);
+        setShowCaptureWarning(false);
+        
+        mediaStream.getVideoTracks()[0].onended = () => {
+          setStream(null);
+        };
+      }
     } catch (err) {
       console.error("Error: " + err);
       setShowCaptureWarning(false);
+      alert('キャプチャに失敗しました。');
     }
   };
 
@@ -284,6 +541,7 @@ export default function App() {
       stream.getTracks().forEach(track => track.stop());
       setStream(null);
     }
+    setScreenshotBase64(null);
   };
 
   const captureAndCrop = (video: HTMLVideoElement, rect: {x: number, y: number, w: number, h: number}) => {
@@ -297,17 +555,20 @@ export default function App() {
   };
 
   // 超軽量なピクセルカラー取得ユーティリティ
-  const checkPixelColor = (video: HTMLVideoElement, xPct: number, yPct: number) => {
+  const checkPixelColor = (source: HTMLVideoElement | HTMLImageElement, xPct: number, yPct: number) => {
     const canvas = document.createElement('canvas');
     canvas.width = 1;
     canvas.height = 1;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
     
-    const x = Math.floor(video.videoWidth * xPct);
-    const y = Math.floor(video.videoHeight * yPct);
+    const w = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+    const h = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
     
-    ctx.drawImage(video, x, y, 1, 1, 0, 0, 1, 1);
+    const x = Math.floor(w * xPct);
+    const y = Math.floor(h * yPct);
+    
+    ctx.drawImage(source, x, y, 1, 1, 0, 0, 1, 1);
     const data = ctx.getImageData(0, 0, 1, 1).data;
     return { r: data[0], g: data[1], b: data[2] };
   };
@@ -387,6 +648,11 @@ export default function App() {
   const simulateTap = (xPct: number, yPct: number) => {
     const id = Date.now() + Math.random();
     setTaps(prev => [...prev, { x: xPct, y: yPct, id }]);
+    
+    if (Capacitor.isNativePlatform()) {
+      OverlayPlugin.performTap({ x: xPct, y: yPct }).catch(e => console.error('Native tap failed', e));
+    }
+
     setTimeout(() => {
       setTaps(prev => prev.filter(t => t.id !== id));
     }, 500);
@@ -520,7 +786,7 @@ export default function App() {
 
         if (expMatch) {
           const avgExp = parseInt(expMatch[1], 10);
-          setAverageExp(avgExp);
+          setAvgExp(avgExp);
           
           const charExps = [0, 0, 0, 0];
           const charWidth = vw * 0.25;
@@ -679,14 +945,66 @@ export default function App() {
   };
 
   // Derived Statistics
-  const avgExp = totalKills > 0 ? totalExp / totalKills : 0;
   const elapsedHours = (Date.now() - startTime) / 3600000;
   const expPerHour = elapsedHours > 0 ? Math.floor(totalExp / elapsedHours) : 0;
 
   const getBatteryIcon = () => {
+    if (isCharging) return <BatteryCharging size={14} className="text-emerald-400 animate-pulse" />;
     if (battery > 60) return <Battery size={14} className="text-emerald-400" />;
     if (battery > 20) return <BatteryMedium size={14} className="text-emerald-400" />;
     return <BatteryWarning size={14} className="text-red-500 animate-pulse" />;
+  };
+
+  const getNetworkIcon = () => {
+    if (networkStatus.type === 'none') return <WifiOff size={14} className="text-red-500" />;
+    if (networkStatus.type === 'wifi') return <Wifi size={14} className="text-emerald-400" />;
+    return <Signal size={14} className="text-emerald-400" />;
+  };
+
+  const getNetworkStrength = () => {
+    if (networkStatus.strength > 75) return 'Strong';
+    if (networkStatus.strength > 40) return 'Medium';
+    return 'Weak';
+  };
+
+  const renderStatusBar = () => (
+    <div className="flex items-center justify-between px-4 py-1 bg-black/40 backdrop-blur-md border-b border-white/5 text-[10px] text-gray-400 z-50">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1">
+          {getBatteryIcon()}
+          <span>{battery}%</span>
+          <span className="text-[9px] opacity-60">({batteryTemp}°C)</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {getNetworkIcon()}
+          <span>{networkStatus.type.toUpperCase()}</span>
+          <span className="text-[9px] opacity-60">({getNetworkStrength()})</span>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+        <span className="truncate max-w-[120px]">{currentStatus}</span>
+      </div>
+    </div>
+  );
+
+  const renderOcrPreview = () => {
+    if (!ocrPreviewImage || !showOCRWindow) return null;
+    return (
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="absolute bottom-20 left-4 right-4 bg-black/80 border border-emerald-500/30 rounded-lg overflow-hidden z-[70] shadow-2xl"
+      >
+        <div className="px-2 py-1 bg-emerald-500/20 border-b border-emerald-500/30 flex justify-between items-center">
+          <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest">OCR PREVIEW (DEBUG)</span>
+          <button onClick={() => setOcrPreviewImage(null)} className="text-gray-400 hover:text-white">
+            <X size={10} />
+          </button>
+        </div>
+        <img src={ocrPreviewImage} alt="OCR Preview" className="w-full h-auto object-contain max-h-[120px]" />
+      </motion.div>
+    );
   };
 
   const getTempIcon = () => {
@@ -696,20 +1014,28 @@ export default function App() {
   };
 
   const handleCalibrationClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (calibrationState === 'IDLE' || calibrationState === 'OCR_SEARCHING' || !videoRef.current || !stream) return;
+    if (calibrationState === 'IDLE' || calibrationState === 'OCR_SEARCHING') return;
+    
+    const source = Capacitor.isNativePlatform() ? imgRef.current : videoRef.current;
+    if (!source) return;
     
     const rect = e.currentTarget.getBoundingClientRect();
     const xPct = (e.clientX - rect.left) / rect.width;
     const yPct = (e.clientY - rect.top) / rect.height;
     
+    // object-cover の場合、コンテナの割合がそのまま画像の割合になる（はず）
+    // ただし、アスペクト比が違うとズレるため、本来は補正が必要。
+    // ここでは簡易的にコンテナの割合をそのまま使用する。
+    
     if (calibrationState === 'UNLOCK_BTN') {
-      const color = checkPixelColor(videoRef.current, xPct, yPct);
+      const color = checkPixelColor(source, xPct, yPct);
       if (color) {
         setUnlockBtnPos({ x: xPct, y: yPct });
         setUnlockBtnColor(color);
         localStorage.setItem('unlockBtnPos', JSON.stringify({ x: xPct, y: yPct }));
         localStorage.setItem('unlockBtnColor', JSON.stringify(color));
         setCalibrationState('IDLE');
+        setScreenshotBase64(null);
         alert('「解除する」ボタンのキャリブレーションが完了しました！\n次回以降はこの位置と色で判定します。');
       }
     } else if (calibrationState === 'CHAR_CENTER') {
@@ -725,6 +1051,7 @@ export default function App() {
       setCircleRadius(radiusPct);
       localStorage.setItem('circleRadius', radiusPct.toString());
       setCalibrationState('IDLE');
+      setScreenshotBase64(null);
       alert('キャラクター位置とサークル範囲のキャリブレーションが完了しました！');
     } else if (calibrationState === 'BERSERKER_ICON') {
       setBerserkerIconPos({ x: xPct, y: yPct });
@@ -734,27 +1061,34 @@ export default function App() {
       setBerserkerItemPos({ x: xPct, y: yPct });
       localStorage.setItem('berserkerItemPos', JSON.stringify({ x: xPct, y: yPct }));
       setCalibrationState('IDLE');
+      setScreenshotBase64(null);
       alert('においぶくろのタップ位置を記憶しました！');
     }
   };
 
   const runAutoCalibration = async () => {
-    if (!videoRef.current || !stream) {
-      alert('カメラ/画面共有が開始されていません');
+    const source = (Capacitor.isNativePlatform() && screenshotBase64) ? imgRef.current : videoRef.current;
+    const isReady = Capacitor.isNativePlatform() ? !!screenshotBase64 : (!!videoRef.current && !!stream);
+
+    if (!source || !isReady) {
+      alert(Capacitor.isNativePlatform() ? 'スクリーンショットが取得されていません' : 'カメラ/画面共有が開始されていません');
       return;
     }
     
     setCalibrationState('OCR_SEARCHING');
     
     try {
-      const video = videoRef.current;
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
+      const vw = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+      const vh = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
       
       // 画面下半分をキャプチャ
       const rect = { x: 0, y: vh * 0.6, w: vw, h: vh * 0.4 };
-      const canvas = captureAndCrop(video, rect);
-      if (!canvas) throw new Error('キャプチャ失敗');
+      const canvas = document.createElement('canvas');
+      canvas.width = rect.w;
+      canvas.height = rect.h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('キャプチャ失敗');
+      ctx.drawImage(source, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
       
       const worker = await createWorker('jpn');
       const { data } = await worker.recognize(canvas) as any;
@@ -773,7 +1107,7 @@ export default function App() {
         const xPct = globalX / vw;
         const yPct = globalY / vh;
         
-        const color = checkPixelColor(video, xPct, yPct);
+        const color = checkPixelColor(source, xPct, yPct);
         
         if (color) {
           setUnlockBtnPos({ x: xPct, y: yPct });
@@ -798,13 +1132,22 @@ export default function App() {
   return (
     <div className="min-h-screen bg-black sm:py-8 flex items-center justify-center">
       <div ref={constraintsRef} className="w-full max-w-[400px] h-[100dvh] sm:h-[800px] sm:rounded-[40px] relative overflow-hidden bg-[#050505] text-gray-200 font-mono selection:bg-emerald-500/30 shadow-[0_0_50px_rgba(0,0,0,0.5)] sm:border-[8px] sm:border-[#111]">
-        {stream && (
+        {renderStatusBar()}
+        {renderOcrPreview()}
+        {screenshotBase64 ? (
+          <img
+            ref={imgRef}
+            src={screenshotBase64}
+            className="absolute inset-0 w-full h-full object-fill opacity-40 pointer-events-none z-0"
+            alt="Screenshot"
+          />
+        ) : stream && (
           <video
             ref={videoRef}
             autoPlay
             playsInline
             muted
-            className="absolute inset-0 w-full h-full object-cover opacity-40 pointer-events-none z-0"
+            className="absolute inset-0 w-full h-full object-fill opacity-40 pointer-events-none z-0"
           />
         )}
         <div className="absolute inset-0 bg-grid opacity-20 pointer-events-none z-0" />
@@ -929,6 +1272,7 @@ export default function App() {
         onClick={() => {
           if (displayMode === 'all') setDisplayMode('stats');
           else if (displayMode === 'stats') setDisplayMode('party');
+          else if (displayMode === 'party') setDisplayMode('logs');
           else setDisplayMode('all');
         }}
         className={`absolute top-6 left-4 bg-[#0a0a0a] rounded-2xl w-[340px] flex flex-col z-30 transition-opacity duration-1000 border border-[#222] shadow-2xl cursor-pointer ${
@@ -1009,7 +1353,28 @@ export default function App() {
                 </div>
               </div>
             ))}
-          </div>
+            </div>
+          )}
+
+          {/* Logs List */}
+          {displayMode === 'logs' && (
+            <div className="space-y-2 max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
+              <div className="flex items-center gap-2 text-emerald-400 font-bold text-[11px] mb-2 sticky top-0 bg-[#0a0a0a] py-1">
+                <Terminal size={12} /> NATIVE LOG CONSOLE
+              </div>
+              {logs.length === 0 ? (
+                <div className="text-center py-8 text-gray-600 text-xs italic">No logs yet...</div>
+              ) : (
+                logs.map(log => (
+                  <div key={log.id} className="text-[10px] font-mono border-l-2 border-[#333] pl-2 py-0.5">
+                    <span className="text-gray-600 mr-2">[{log.time}]</span>
+                    <span className={log.type === 'error' ? 'text-red-400' : log.type === 'warn' ? 'text-amber-400' : 'text-gray-300'}>
+                      {log.message}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
           )}
         </div>
       </motion.div>
@@ -1173,12 +1538,40 @@ export default function App() {
                           await OverlayPlugin.startOverlay();
                           // オーバーレイ起動後に現在の設定を送信
                           await OverlayPlugin.updateSettings({
-                            targetKeyword: tapPriorities[0].label,
+                            targetKeywords: tapPriorities.filter(p => {
+                              if (p.id === 'metal') return targetMetal;
+                              if (p.id === 'kakutei') return targetKakutei;
+                              if (p.id === 'koukaku') return targetKoukaku;
+                              if (p.id === 'normal') return targetNormalEnemy;
+                              if (p.id === 'strong') return targetStrongEnemy;
+                              if (p.id === 'event') return targetEventPop;
+                              if (p.id === 'pot') return targetPot;
+                              if (p.id === 'hokora') return targetHokora;
+                              if (p.id === 'other') return targetOther;
+                              return false;
+                            }).map(p => p.label).join(',') || '！',
                             isAutoBattleEnabled: isAutoBattleEnabled,
                             tapOffsetX: 0,
                             tapOffsetY: targetTapOffset,
                             scanInterval: scanInterval,
                             enableResultDetection: enableResultDetection,
+                            targetPot: targetPot,
+                            targetHokora: targetHokora,
+                            enablePartyScan: enablePartyScan,
+                            unlockBtnX: unlockBtnPos.x,
+                            unlockBtnY: unlockBtnPos.y,
+                            charCenterX: charCenterPos.x,
+                            charCenterY: charCenterPos.y,
+                            circleRadius: circleRadius,
+                            isBerserkerMode: isBerserkerMode,
+                            berserkerIconX: berserkerIconPos.x,
+                            berserkerIconY: berserkerIconPos.y,
+                            berserkerItemX: berserkerItemPos.x,
+                            berserkerItemY: berserkerItemPos.y,
+                            berserkerInterval: 300000,
+                            unlockBtnColor: [unlockBtnColor.r, unlockBtnColor.g, unlockBtnColor.b],
+                            pullMargin: pullMargin,
+                            appStatus: appStatus,
                           });
                         } catch (e) {
                           console.error('Failed to start overlay', e);
@@ -1219,6 +1612,52 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Capture Settings */}
+              {!Capacitor.isNativePlatform() && (
+                <div className="border-b border-[#333] pb-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="text-xs text-emerald-400 font-bold">キャプチャ設定</label>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] text-gray-400">ソースタイプ</label>
+                      <div className="flex bg-[#111] rounded p-0.5 border border-[#222]">
+                        <button 
+                          onClick={() => setCaptureSource('screen')}
+                          className={`px-2 py-1 rounded text-[9px] font-bold transition-colors ${captureSource === 'screen' ? 'bg-emerald-500 text-black' : 'text-gray-500 hover:text-gray-300'}`}
+                        >
+                          画面共有
+                        </button>
+                        <button 
+                          onClick={() => setCaptureSource('camera')}
+                          className={`px-2 py-1 rounded text-[9px] font-bold transition-colors ${captureSource === 'camera' ? 'bg-emerald-500 text-black' : 'text-gray-500 hover:text-gray-300'}`}
+                        >
+                          カメラ
+                        </button>
+                      </div>
+                    </div>
+
+                    {captureSource === 'camera' && availableDevices.length > 0 && (
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] text-gray-400">カメラ選択</label>
+                        <select 
+                          value={selectedDeviceId}
+                          onChange={(e) => setSelectedDeviceId(e.target.value)}
+                          className="w-full bg-[#111] border border-[#222] rounded px-2 py-1.5 text-[10px] text-gray-300 outline-none focus:border-emerald-500/50"
+                        >
+                          {availableDevices.map(device => (
+                            <option key={device.deviceId} value={device.deviceId}>
+                              {device.label || `Camera ${device.deviceId.slice(0, 5)}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* OCR & Scan Settings */}
               <div className="border-b border-[#333] pb-4">
                 <button 
@@ -1234,8 +1673,8 @@ export default function App() {
                     <div className="bg-[#111] p-3 rounded-lg border border-[#333]">
                       <div className="flex items-center justify-between mb-2">
                         <label className="text-xs text-gray-300 font-bold">WALKモード判定位置の調整</label>
-                        {!Capacitor.isNativePlatform() ? (
-                          <div className="flex gap-2">
+                        <div className="flex gap-2">
+                          {!Capacitor.isNativePlatform() && (
                             <button 
                               onClick={() => {
                                 setShowSettings(false);
@@ -1245,23 +1684,24 @@ export default function App() {
                             >
                               OCR自動設定
                             </button>
-                            <button 
-                              onClick={() => {
-                                setShowSettings(false);
-                                setCalibrationState('UNLOCK_BTN');
-                              }}
-                              className="px-2 py-1 bg-blue-900/40 text-blue-400 border border-blue-800 rounded text-[10px] font-bold hover:bg-blue-900/60 transition-colors"
-                            >
-                              手動設定
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-[10px] text-emerald-400 border border-emerald-800 bg-emerald-900/40 px-2 py-1 rounded">ネイティブ連携中</span>
-                        )}
+                          )}
+                          <button 
+                            onClick={async () => {
+                              setShowSettings(false);
+                              if (Capacitor.isNativePlatform()) {
+                                await startCapture();
+                              }
+                              setCalibrationState('UNLOCK_BTN');
+                            }}
+                            className="px-2 py-1 bg-blue-900/40 text-blue-400 border border-blue-800 rounded text-[10px] font-bold hover:bg-blue-900/60 transition-colors"
+                          >
+                            手動設定
+                          </button>
+                        </div>
                       </div>
                       <p className="text-[10px] text-gray-500 leading-relaxed">
                         {Capacitor.isNativePlatform() 
-                          ? 'Android版では、オーバーレイ上の「Set Scan Area」「Set Tap Point」ボタンを使用して判定位置を調整してください。'
+                          ? '「手動設定」を押すと現在の画面をキャプチャし、タップで判定位置と色を記憶させます。'
                           : 'ゲーム画面の「解除する」ボタンの位置と色を記憶させ、自動戦闘の監視精度を100%にします。'}
                       </p>
                     </div>
@@ -1270,19 +1710,18 @@ export default function App() {
                     <div className="bg-[#111] p-3 rounded-lg border border-[#333]">
                       <div className="flex items-center justify-between mb-2">
                         <label className="text-xs text-gray-300 font-bold">キャラクター位置＆サークル範囲</label>
-                        {!Capacitor.isNativePlatform() ? (
-                          <button 
-                            onClick={() => {
-                              setShowSettings(false);
-                              setCalibrationState('CHAR_CENTER');
-                            }}
-                            className="px-3 py-1 bg-purple-900/40 text-purple-400 border border-purple-800 rounded text-xs font-bold hover:bg-purple-900/60 transition-colors"
-                          >
-                            設定する
-                          </button>
-                        ) : (
-                          <span className="text-[10px] text-purple-400 border border-purple-800 bg-purple-900/40 px-2 py-1 rounded">ネイティブ連携中</span>
-                        )}
+                        <button 
+                          onClick={async () => {
+                            setShowSettings(false);
+                            if (Capacitor.isNativePlatform()) {
+                              await startCapture();
+                            }
+                            setCalibrationState('CHAR_CENTER');
+                          }}
+                          className="px-3 py-1 bg-purple-900/40 text-purple-400 border border-purple-800 rounded text-xs font-bold hover:bg-purple-900/60 transition-colors"
+                        >
+                          設定する
+                        </button>
                       </div>
                       <p className="text-[10px] text-gray-500 leading-relaxed mb-3">
                         {Capacitor.isNativePlatform()
@@ -1512,6 +1951,34 @@ export default function App() {
                     </summary>
                     <div className="text-[10px] text-gray-400 mt-1 pl-2 border-l-2 border-[#333] leading-relaxed">
                       パーティのHP/MPなどを監視し、ピンチの時に自動で回復などの行動をとる機能です。
+                    </div>
+                  </details>
+                </div>
+              </div>
+
+              {/* Power Saving */}
+              <div className="border-b border-[#333] pb-4 space-y-3">
+                <div className="text-emerald-400 font-bold text-xs mb-2">省電力・保護</div>
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-gray-400">自動減光 (画面保護)</label>
+                    <button 
+                      onClick={() => {
+                        const newVal = !autoBrightness;
+                        setAutoBrightness(newVal);
+                        localStorage.setItem('autoBrightness', String(newVal));
+                      }}
+                      className={`px-3 py-1 rounded text-xs font-bold ${autoBrightness ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
+                    >
+                      {autoBrightness ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
+                  <details className="group mt-1.5">
+                    <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 transition-colors list-none [&::-webkit-details-marker]:hidden flex items-center gap-1">
+                      <HelpCircle size={10} /> Tips
+                    </summary>
+                    <div className="text-[10px] text-gray-400 mt-1 pl-2 border-l-2 border-[#333] leading-relaxed">
+                      サービス実行中、画面を暗くしてバッテリー消費を抑え、焼き付きを防止します。
                     </div>
                   </details>
                 </div>
@@ -1797,6 +2264,111 @@ export default function App() {
                   </div>
                   <p className="text-[10px] text-gray-500 mt-1">ゲーム画面を背景に透かして表示します</p>
                 </div>
+              </div>
+
+              {/* Permission Status */}
+              <div className="bg-[#111] p-4 rounded-xl border border-[#222] space-y-3">
+                <div className="text-[11px] text-gray-400 font-bold tracking-widest mb-2 flex items-center gap-2">
+                  <Activity size={12} /> 権限・サービスステータス
+                </div>
+                
+                <div className="grid grid-cols-1 gap-2">
+                  <div className="flex items-center justify-between p-2 bg-[#0a0a0a] rounded border border-[#222]">
+                    <div className="flex items-center gap-2">
+                      {permissionStatus.overlay ? <ShieldCheck size={14} className="text-emerald-400" /> : <ShieldAlert size={14} className="text-red-400" />}
+                      <span className="text-xs text-gray-300">オーバーレイ権限</span>
+                    </div>
+                    {!permissionStatus.overlay && (
+                      <button 
+                        onClick={() => OverlayPlugin.requestPermission({ type: 'overlay' as const })}
+                        className="px-2 py-1 bg-red-900/20 text-red-400 border border-red-800/50 rounded text-[10px] font-bold"
+                      >
+                        許可する
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between p-2 bg-[#0a0a0a] rounded border border-[#222]">
+                    <div className="flex items-center gap-2">
+                      {permissionStatus.accessibility ? <ShieldCheck size={14} className="text-emerald-400" /> : <ShieldAlert size={14} className="text-red-400" />}
+                      <span className="text-xs text-gray-300">アクセシビリティ</span>
+                    </div>
+                    {!permissionStatus.accessibility && (
+                      <button 
+                        onClick={() => OverlayPlugin.requestPermission({ type: 'accessibility' as const })}
+                        className="px-2 py-1 bg-red-900/20 text-red-400 border border-red-800/50 rounded text-[10px] font-bold"
+                      >
+                        有効にする
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between p-2 bg-[#0a0a0a] rounded border border-[#222]">
+                    <div className="flex items-center gap-2">
+                      {permissionStatus.batteryOptimization ? <ShieldCheck size={14} className="text-emerald-400" /> : <ShieldAlert size={14} className="text-red-400" />}
+                      <span className="text-xs text-gray-300">バッテリー最適化除外</span>
+                    </div>
+                    {!permissionStatus.batteryOptimization && (
+                      <button 
+                        onClick={() => OverlayPlugin.requestPermission({ type: 'batteryOptimization' as const })}
+                        className="px-2 py-1 bg-red-900/20 text-red-400 border border-red-800/50 rounded text-[10px] font-bold"
+                      >
+                        除外する
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between p-2 bg-[#0a0a0a] rounded border border-[#222]">
+                    <div className="flex items-center gap-2">
+                      {permissionStatus.camera ? <ShieldCheck size={14} className="text-emerald-400" /> : <ShieldAlert size={14} className="text-red-400" />}
+                      <span className="text-xs text-gray-300">カメラ権限</span>
+                    </div>
+                    {!permissionStatus.camera && (
+                      <button 
+                        onClick={() => OverlayPlugin.requestPermission({ type: 'camera' as const })}
+                        className="px-2 py-1 bg-red-900/20 text-red-400 border border-red-800/50 rounded text-[10px] font-bold"
+                      >
+                        許可する
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between p-2 bg-[#0a0a0a] rounded border border-[#222]">
+                    <div className="flex items-center gap-2">
+                      {permissionStatus.service ? <ShieldCheck size={14} className="text-emerald-400" /> : <ShieldAlert size={14} className="text-gray-400" />}
+                      <span className="text-xs text-gray-300">画面共有・サービス稼働</span>
+                    </div>
+                    <div className="flex gap-2">
+                      {permissionStatus.service ? (
+                        <button 
+                          onClick={() => OverlayPlugin.stopOverlay()}
+                          className="px-2 py-1 bg-red-900/20 text-red-400 border border-red-800/50 rounded text-[10px] font-bold"
+                        >
+                          停止
+                        </button>
+                      ) : (
+                        <button 
+                          onClick={() => OverlayPlugin.requestPermission({ type: 'screenCapture' as const })}
+                          className="px-2 py-1 bg-emerald-900/20 text-emerald-400 border border-emerald-800/50 rounded text-[10px] font-bold"
+                        >
+                          開始
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <details className="group mt-2">
+                  <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 transition-colors list-none [&::-webkit-details-marker]:hidden flex items-center gap-1">
+                    <HelpCircle size={10} /> Tips
+                  </summary>
+                  <div className="text-[10px] text-gray-400 mt-1 pl-2 border-l-2 border-[#333] space-y-1.5 leading-relaxed">
+                    <p>• <span className="text-gray-300">オーバーレイ権限:</span> 他のアプリ（ゲーム）の上に操作パネルを表示するために必要です。</p>
+                    <p>• <span className="text-gray-300">アクセシビリティ:</span> 自動タップ機能を実現するために必要です。この権限がないと自動戦闘が動作しません。</p>
+                    <p>• <span className="text-gray-300">バッテリー最適化除外:</span> バックグラウンドでアプリが停止されるのを防ぎ、安定した動作を維持するために必要です。</p>
+                    <p>• <span className="text-gray-300">サービス稼働状況:</span> バックグラウンドでスキャンやタップを行うエンジンの状態です。OFFの場合は全ての自動機能が停止します。</p>
+                  </div>
+                </details>
               </div>
             </div>
 

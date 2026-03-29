@@ -125,6 +125,30 @@
             android:textColor="#9CA3AF" />
 
         <LinearLayout
+            android:id="@+id/layout_debug"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+            
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="OCR Preview (Processed):"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp" />
+                
+            <ImageView
+                android:id="@+id/iv_debug_preview"
+                android:layout_width="160dp"
+                android:layout_height="80dp"
+                android:layout_gravity="center"
+                android:background="#44FFFFFF"
+                android:scaleType="fitCenter" />
+        </LinearLayout>
+
+        <LinearLayout
             android:id="@+id/layout_fine_tune"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

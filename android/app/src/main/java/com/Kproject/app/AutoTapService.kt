@@ -28,7 +28,18 @@ class AutoTapService : AccessibilityService() {
         val path = Path()
         path.moveTo(x, y)
         val builder = GestureDescription.Builder()
-        builder.addStroke(GestureDescription.StrokeDescription(path, 0, 10))
+        // タップ時間を 50ms ~ 150ms の間でランダム化して人間らしさを出す
+        val duration = kotlin.random.Random.nextLong(50, 150)
+        builder.addStroke(GestureDescription.StrokeDescription(path, 0, duration))
+        dispatchGesture(builder.build(), null, null)
+    }
+
+    fun performSwipe(startX: Float, startY: Float, endX: Float, endY: Float, duration: Long = 300L) {
+        val path = Path()
+        path.moveTo(startX, startY)
+        path.lineTo(endX, endY)
+        val builder = GestureDescription.Builder()
+        builder.addStroke(GestureDescription.StrokeDescription(path, 0, duration))
         dispatchGesture(builder.build(), null, null)
     }
 }
