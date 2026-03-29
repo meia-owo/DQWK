@@ -35,10 +35,15 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # 【重要】
-    # ・お節介なツール（setup-gradle）は使いません。
-    # ・壊れている内蔵ファイル（./gradlew）も使いません。
-    # ・GitHubのサーバーに最初から入っている標準の「gradle」コマンドを使います。
+    # 【重要】新しすぎるバージョン(9.4.1)を回避するため、確実に「8.2.1」をインストールします
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '8.2.1'
+        validate-wrappers: false
+        cache-disabled: true
+
+    # 【重要】壊れたファイル(./gradlew)は使わず、上でインストールした安全な「gradle」を使います
     - name: Build Debug APK
       working-directory: ./android
       run: gradle assembleDebug --no-daemon --no-build-cache
