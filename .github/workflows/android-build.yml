@@ -19,10 +19,11 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Set up JDK 17
+      # 【修正ポイント】17 から 21 へ変更
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
       - name: Setup Android SDK
@@ -31,7 +32,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '8.7' # 修正: Jar処理のバグが修正された 8.7 を使用
+          gradle-version: '8.7'
 
       - name: Install Dependencies
         run: npm install
@@ -42,7 +43,6 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
-      # 【最重要】Capacitor内部のビルドも強制制御するための初期化スクリプトを生成
       - name: Create Init Script
         run: |
           echo "allprojects {
@@ -64,7 +64,6 @@ jobs:
 
       - name: Build Debug APK
         working-directory: ./android
-        # 修正: 統計収集エラーを回避するためのフラグを強化し、init-script を適用
         run: gradle assembleDebug --init-script ../init.gradle -Pkotlin.plugin.statistics.enabled=false -Pkotlin.statistics.enabled=false --no-daemon --no-build-cache
 
       - name: Upload APK
