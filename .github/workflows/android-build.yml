@@ -19,7 +19,6 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '22'
-        # npmのキャッシュは安全なので残します
 
     - name: Install Dependencies
       run: npm install
@@ -35,17 +34,21 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        # 【重要】過去のゴミを読み込まないよう、あえてGradleのキャッシュ設定を記述しません
 
-    # 【重要】エラーの元凶だった「Setup Gradle」のステップを完全に削除しました
+    # 【正解のステップ】
+    # 壊れた内蔵ファイルは使わず、ここで安全なGradle(8.2.1)を新しく用意します。
+    # 過去のゴミキャッシュを絶対に読み込まないよう「cache-disabled: true」を指定します。
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '8.2.1'
+        validate-wrappers: false
+        cache-disabled: true
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x android/gradlew
-
-    # GitHubのツールに頼らず、プロジェクト内蔵の標準コマンド(gradlew)だけでビルドします
+    # 内蔵コマンド(./gradlew)ではなく、新しく用意した安全なコマンド(gradle)を使います。
     - name: Build Debug APK
       working-directory: ./android
-      run: ./gradlew assembleDebug --no-daemon
+      run: gradle assembleDebug --no-build-cache
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
