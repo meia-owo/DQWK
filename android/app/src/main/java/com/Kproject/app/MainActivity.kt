@@ -70,7 +70,7 @@ class MainActivity : BridgeActivity() {
                 data.put("temperature", tempCelsius)
                 
                 val plugin = bridge.getPlugin("OverlayPlugin")?.instance as? OverlayPlugin
-                plugin?.notifyListeners("batteryStatusUpdate", data)
+                plugin?.emitEvent("batteryStatusUpdate", data)
             }
         }
         registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -163,7 +163,7 @@ class MainActivity : BridgeActivity() {
                 if (log != null) data.put("log", log)
                 
                 val plugin = bridge.getPlugin("OverlayPlugin")?.instance as? OverlayPlugin
-                plugin?.notifyListeners("statsUpdate", data)
+                plugin?.emitEvent("statsUpdate", data)
             }
         }
     }
@@ -181,7 +181,7 @@ class MainActivity : BridgeActivity() {
                 if (image != null) data.put("image", image)
                 
                 val plugin = bridge.getPlugin("OverlayPlugin")?.instance as? OverlayPlugin
-                plugin?.notifyListeners("logUpdate", data)
+                plugin?.emitEvent("logUpdate", data)
             }
         }
     }
@@ -197,7 +197,7 @@ class MainActivity : BridgeActivity() {
                 data.put("type", type)
                 
                 val plugin = bridge.getPlugin("OverlayPlugin")?.instance as? OverlayPlugin
-                plugin?.notifyListeners("toastMessage", data)
+                plugin?.emitEvent("toastMessage", data)
             }
         }
     }
@@ -217,7 +217,7 @@ class MainActivity : BridgeActivity() {
                 data.put("h", h)
                 
                 val plugin = bridge.getPlugin("OverlayPlugin")?.instance as? OverlayPlugin
-                plugin?.notifyListeners("scanAreaUpdate", data)
+                plugin?.emitEvent("scanAreaUpdate", data)
             }
         }
     }
@@ -243,7 +243,7 @@ class MainActivity : BridgeActivity() {
                 data.put("color", colorArr)
                 
                 val plugin = bridge.getPlugin("OverlayPlugin")?.instance as? OverlayPlugin
-                plugin?.notifyListeners("calibrationFinished", data)
+                plugin?.emitEvent("calibrationFinished", data)
             }
         }
     }
@@ -258,7 +258,7 @@ class MainActivity : BridgeActivity() {
                 data.put("isAutoBattleEnabled", currentIsAutoBattleEnabled)
                 
                 val plugin = bridge.getPlugin("OverlayPlugin")?.instance as? OverlayPlugin
-                plugin?.notifyListeners("toggleStateUpdate", data)
+                plugin?.emitEvent("toggleStateUpdate", data)
             }
         }
     }
@@ -343,6 +343,10 @@ class MainActivity : BridgeActivity() {
 
     @CapacitorPlugin(name = "OverlayPlugin")
     inner class OverlayPlugin : Plugin() {
+        fun emitEvent(eventName: String, data: JSObject) {
+            notifyListeners(eventName, data)
+        }
+
         @PluginMethod
         fun startCalibration(call: PluginCall) {
             val type = call.getString("type") ?: "anchor"
