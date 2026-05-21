@@ -1159,7 +1159,7 @@ class OverlayService : Service() {
                 FrameLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = 100
+                setMargins(0, 0, 0, 100)
             }
             setOnClickListener {
                 endCalibration(crosshairContainer)
