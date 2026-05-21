@@ -61,30 +61,17 @@ jobs:
       with:
         gradle-version: '8.7'
 
-    - name: Fix Corrupt PNGs
+    - name: Fix Corrupt Assets
       run: |
+        npm i -g @capacitor/assets
         node -e "
         const fs = require('fs');
-        const path = require('path');
-        const validPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAAtJREFUGFdjYAACAAAFAAEE9nLzAAAAAElFTkSuQmCC';
-        const buffer = Buffer.from(validPngBase64, 'base64');
-        function replacePngs(dir) {
-          if (fs.existsSync(dir)) {
-            const list = fs.readdirSync(dir);
-            for (const item of list) {
-              const fullPath = path.join(dir, item);
-              const stat = fs.statSync(fullPath);
-              if (stat.isDirectory()) {
-                replacePngs(fullPath);
-              } else if (item.endsWith('.png')) {
-                fs.writeFileSync(fullPath, buffer);
-                console.log('Replaced ' + fullPath);
-              }
-            }
-          }
-        }
-        replacePngs('./android/app/src/main/res');
+        if (!fs.existsSync('assets')) fs.mkdirSync('assets');
+        const buffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVQIW2NkYGD4z8DAwMgAI0AMCKcCB09uD0QAAAAASUVORK5CYII=', 'base64');
+        fs.writeFileSync('assets/icon.png', buffer);
+        fs.writeFileSync('assets/splash.png', buffer);
         "
+        npx @capacitor/assets generate --android
 
     - name: Build Android APK
       run: |
