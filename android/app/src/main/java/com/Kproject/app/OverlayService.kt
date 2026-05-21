@@ -1244,7 +1244,7 @@ class OverlayService : Service() {
         }
 
         val tvTargetWord = overlayView.findViewById<TextView>(R.id.tv_target_word)
-        tvTargetWord.text = "TARGET: $targetKeyword"
+        tvTargetWord.text = "TARGET: ${targetKeywords.firstOrNull() ?: "！"}"
         tvTargetWord.setOnClickListener { showKeywordInputDialog() }
 
         overlayView.findViewById<TextView>(R.id.btn_scan_area).setOnClickListener { toggleScanArea() }
@@ -1258,15 +1258,17 @@ class OverlayService : Service() {
 
     private fun showKeywordInputDialog() {
         val editText = EditText(this).apply {
-            setText(targetKeyword)
-            setSelection(targetKeyword.length)
+            val currentKeywords = targetKeywords.joinToString(",")
+            setText(currentKeywords)
+            setSelection(currentKeywords.length)
         }
         val dialog = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("Set Target Keyword")
             .setView(editText)
             .setPositiveButton("OK") { _, _ ->
-                targetKeyword = editText.text.toString()
-                overlayView.findViewById<TextView>(R.id.tv_target_word).text = "TARGET: $targetKeyword"
+                val keywordsStr = editText.text.toString()
+                targetKeywords = keywordsStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                overlayView.findViewById<TextView>(R.id.tv_target_word).text = "TARGET: ${targetKeywords.firstOrNull() ?: "！"}"
             }
             .setNegativeButton("Cancel", null)
             .create()
