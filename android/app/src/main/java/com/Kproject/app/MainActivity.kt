@@ -445,12 +445,6 @@ class MainActivity : BridgeActivity() {
         fun startOverlay(call: PluginCall) {
             mainActivity.requestBatteryOptimizationExemption()
             
-            if (!mainActivity.isAccessibilityServiceEnabled(mainActivity, AutoTapService::class.java)) {
-                mainActivity.showAccessibilityDialog()
-                call.reject("Accessibility service not enabled")
-                return
-            }
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(mainActivity)) {
                 mainActivity.pendingCall = call
                 val intent = Intent(

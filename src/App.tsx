@@ -1714,6 +1714,7 @@ export default function App() {
                             appStatus: appStatus,
                           });
                         } catch (e) {
+                          alert('オーバーレイの開始に失敗しました。権限を確認してください。\n' + e);
                           console.error('Failed to start overlay', e);
                         }
                       }}
