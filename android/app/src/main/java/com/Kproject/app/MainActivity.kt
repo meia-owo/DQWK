@@ -360,17 +360,6 @@ class MainActivity : BridgeActivity() {
         }
 
         @PluginMethod
-        fun startOverlay(call: PluginCall) {
-            val intent = Intent(this@MainActivity, OverlayService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
-            call.resolve()
-        }
-
-        @PluginMethod
         fun takeScreenshot(call: PluginCall) {
             val base64 = OverlayService.instance?.takeScreenshot()
             if (base64 != null) {
