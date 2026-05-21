@@ -32,25 +32,25 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 
 class MainActivity : BridgeActivity() {
-    private val REQUEST_MEDIA_PROJECTION = 1001
-    private val REQUEST_OVERLAY_PERMISSION = 1002
-    private val REQUEST_CAMERA_PERMISSION = 1003
-    private var pendingCall: PluginCall? = null
+    val REQUEST_MEDIA_PROJECTION = 1001
+    val REQUEST_OVERLAY_PERMISSION = 1002
+    val REQUEST_CAMERA_PERMISSION = 1003
+    var pendingCall: PluginCall? = null
 
     // 現在の設定を保持
-    private var currentTargetKeywords = "！"
-    private var currentIsAutoBattleEnabled = true
-    private var currentTapOffsetX = 0f
-    private var currentTapOffsetY = 0f
-    private var currentScanInterval = 3000
-    private var currentEnableResultDetection = true
-    private var currentAutoBrightness = false
-    private var originalBrightness = -1f
+    var currentTargetKeywords = "！"
+    var currentIsAutoBattleEnabled = true
+    var currentTapOffsetX = 0f
+    var currentTapOffsetY = 0f
+    var currentScanInterval = 3000
+    var currentEnableResultDetection = true
+    var currentAutoBrightness = false
+    var originalBrightness = -1f
 
-    private var batteryReceiver: BroadcastReceiver? = null
+    var batteryReceiver: BroadcastReceiver? = null
     private lateinit var sharedPrefs: SharedPreferences
 
-    private fun startBatteryMonitoring() {
+    fun startBatteryMonitoring() {
         batteryReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
@@ -76,7 +76,7 @@ class MainActivity : BridgeActivity() {
         registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
     }
 
-    private fun getNetworkStatus(): JSObject {
+    fun getNetworkStatus(): JSObject {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val res = JSObject()
         
@@ -124,7 +124,7 @@ class MainActivity : BridgeActivity() {
         return res
     }
 
-    private fun loadSettings() {
+    fun loadSettings() {
         sharedPrefs = getSharedPreferences("OverlaySettings", Context.MODE_PRIVATE)
         currentTargetKeywords = sharedPrefs.getString("targetKeywords", "！") ?: "！"
         currentIsAutoBattleEnabled = sharedPrefs.getBoolean("isAutoBattleEnabled", true)
@@ -135,7 +135,7 @@ class MainActivity : BridgeActivity() {
         currentAutoBrightness = sharedPrefs.getBoolean("autoBrightness", false)
     }
 
-    private fun saveSettings() {
+    fun saveSettings() {
         sharedPrefs.edit().apply {
             putString("targetKeywords", currentTargetKeywords)
             putBoolean("isAutoBattleEnabled", currentIsAutoBattleEnabled)
@@ -304,7 +304,7 @@ class MainActivity : BridgeActivity() {
         unregisterReceiver(calibrationReceiver)
     }
 
-    private fun isAccessibilityServiceEnabled(context: Context, service: Class<out AccessibilityService>): Boolean {
+    fun isAccessibilityServiceEnabled(context: Context, service: Class<out AccessibilityService>): Boolean {
         val expectedComponentName = ComponentName(context, service)
         val enabledServices = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
         val colonSplitter = TextUtils.SimpleStringSplitter(':')
@@ -317,7 +317,7 @@ class MainActivity : BridgeActivity() {
         return false
     }
 
-    private fun showAccessibilityDialog() {
+    fun showAccessibilityDialog() {
         AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("Accessibility Service Required")
             .setMessage("Please enable the DQWEXP Accessibility Service to allow auto-tapping.")
@@ -328,7 +328,7 @@ class MainActivity : BridgeActivity() {
             .show()
     }
 
-    private fun requestBatteryOptimizationExemption() {
+    fun requestBatteryOptimizationExemption() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val intent = Intent()
             val packageName = packageName
@@ -342,7 +342,9 @@ class MainActivity : BridgeActivity() {
     }
 
     @CapacitorPlugin(name = "OverlayPlugin")
-    inner class OverlayPlugin : Plugin() {
+    class OverlayPlugin : Plugin() {
+        private val mainActivity: MainActivity
+            get() = activity as MainActivity
         fun emitEvent(eventName: String, data: JSObject) {
             notifyListeners(eventName, data)
         }
@@ -358,7 +360,7 @@ class MainActivity : BridgeActivity() {
 
         @PluginMethod
         fun stopOverlay(call: PluginCall) {
-            val intent = Intent(this@MainActivity, OverlayService::class.java)
+            val intent = Intent(mainActivity, OverlayService::class.java)
             stopService(intent)
             call.resolve()
         }
@@ -378,19 +380,19 @@ class MainActivity : BridgeActivity() {
         @PluginMethod
         fun getStatus(call: PluginCall) {
             val res = JSObject()
-            res.put("overlayPermission", Settings.canDrawOverlays(this@MainActivity))
-            res.put("accessibilityService", isAccessibilityServiceEnabled(this@MainActivity, AutoTapService::class.java))
+            res.put("overlayPermission", Settings.canDrawOverlays(mainActivity))
+            res.put("accessibilityService", mainActivity.isAccessibilityServiceEnabled(mainActivity, AutoTapService::class.java))
             res.put("isServiceRunning", isServiceRunning(OverlayService::class.java))
-            res.put("cameraPermission", ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+            res.put("cameraPermission", ContextCompat.checkSelfPermission(mainActivity, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
             
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val pm = mainActivity.getSystemService(Context.POWER_SERVICE) as PowerManager
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                res.put("batteryOptimizationExempt", pm.isIgnoringBatteryOptimizations(packageName))
+                res.put("batteryOptimizationExempt", pm.isIgnoringBatteryOptimizations(mainActivity.packageName))
             } else {
                 res.put("batteryOptimizationExempt", true)
             }
 
-            res.put("network", getNetworkStatus())
+            res.put("network", mainActivity.getNetworkStatus())
             
             call.resolve(res)
         }
@@ -400,35 +402,35 @@ class MainActivity : BridgeActivity() {
             val type = call.getString("type")
             when (type) {
                 "overlay" -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this@MainActivity)) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(mainActivity)) {
                         val intent = Intent(
                             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + context.packageName)
+                            Uri.parse("package:" + context.mainActivity.packageName)
                         )
                         startActivity(intent)
                     }
                 }
                 "accessibility" -> {
-                    showAccessibilityDialog()
+                    mainActivity.showAccessibilityDialog()
                 }
                 "batteryOptimization" -> {
-                    requestBatteryOptimizationExemption()
+                    mainActivity.requestBatteryOptimizationExemption()
                 }
                 "camera" -> {
-                    if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                        ActivityCompat.requestPermissions(this@MainActivity, arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA_PERMISSION)
+                    if (ContextCompat.checkSelfPermission(mainActivity, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                        ActivityCompat.requestPermissions(mainActivity, arrayOf(Manifest.permission.CAMERA), mainActivity.REQUEST_CAMERA_PERMISSION)
                     }
                 }
                 "screenCapture" -> {
-                    startMediaProjection(call)
+                    mainActivity.startMediaProjection(call)
                     return
                 }
             }
             call.resolve()
         }
 
-        private fun isServiceRunning(serviceClass: Class<*>): Boolean {
-            val manager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        fun isServiceRunning(serviceClass: Class<*>): Boolean {
+            val manager = mainActivity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
             for (service in manager.getRunningServices(Int.MAX_VALUE)) {
                 if (serviceClass.name == service.service.className) {
                     return true
@@ -439,23 +441,23 @@ class MainActivity : BridgeActivity() {
 
         @PluginMethod
         fun startOverlay(call: PluginCall) {
-            requestBatteryOptimizationExemption()
+            mainActivity.requestBatteryOptimizationExemption()
             
-            if (!isAccessibilityServiceEnabled(this@MainActivity, AutoTapService::class.java)) {
-                showAccessibilityDialog()
+            if (!mainActivity.isAccessibilityServiceEnabled(mainActivity, AutoTapService::class.java)) {
+                mainActivity.showAccessibilityDialog()
                 call.reject("Accessibility service not enabled")
                 return
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
-                pendingCall = call
+                mainActivity.pendingCall = call
                 val intent = Intent(
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + context.packageName)
+                    Uri.parse("package:" + context.mainActivity.packageName)
                 )
-                this@MainActivity.startActivityForResult(intent, REQUEST_OVERLAY_PERMISSION)
+                mainActivity.startActivityForResult(intent, mainActivity.REQUEST_OVERLAY_PERMISSION)
             } else {
-                startMediaProjection(call)
+                mainActivity.startMediaProjection(call)
             }
         }
 
@@ -465,7 +467,7 @@ class MainActivity : BridgeActivity() {
             val yPct = call.getDouble("y", 0.5) ?: 0.5
             
             val screenMetrics = android.util.DisplayMetrics()
-            windowManager.defaultDisplay.getRealMetrics(screenMetrics)
+            mainActivity.windowManager.defaultDisplay.getRealMetrics(screenMetrics)
             val tapX = (screenMetrics.widthPixels * xPct).toFloat()
             val tapY = (screenMetrics.heightPixels * yPct).toFloat()
             
@@ -475,30 +477,30 @@ class MainActivity : BridgeActivity() {
 
         @PluginMethod
         fun updateSettings(call: PluginCall) {
-            currentTargetKeywords = call.getString("targetKeywords", "！") ?: "！"
-            currentIsAutoBattleEnabled = call.getBoolean("isAutoBattleEnabled", true) ?: true
-            currentTapOffsetX = call.getDouble("tapOffsetX", 0.0)?.toFloat() ?: 0f
-            currentTapOffsetY = call.getDouble("tapOffsetY", 0.0)?.toFloat() ?: 0f
-            currentScanInterval = call.getInt("scanInterval", 3000) ?: 3000
-            currentEnableResultDetection = call.getBoolean("enableResultDetection", true) ?: true
-            currentAutoBrightness = call.getBoolean("autoBrightness", false) ?: false
+            mainActivity.currentTargetKeywords = call.getString("targetKeywords", "！") ?: "！"
+            mainActivity.currentIsAutoBattleEnabled = call.getBoolean("isAutoBattleEnabled", true) ?: true
+            mainActivity.currentTapOffsetX = call.getDouble("tapOffsetX", 0.0)?.toFloat() ?: 0f
+            mainActivity.currentTapOffsetY = call.getDouble("tapOffsetY", 0.0)?.toFloat() ?: 0f
+            mainActivity.currentScanInterval = call.getInt("scanInterval", 3000) ?: 3000
+            mainActivity.currentEnableResultDetection = call.getBoolean("enableResultDetection", true) ?: true
+            mainActivity.currentAutoBrightness = call.getBoolean("autoBrightness", false) ?: false
             val targetPot = call.getBoolean("targetPot", true) ?: true
             val enablePotFilter = call.getBoolean("enablePotFilter", true) ?: true
             val targetHokora = call.getBoolean("targetHokora", true) ?: true
 
-            saveSettings()
+            mainActivity.saveSettings()
 
             val intent = Intent("com.Kproject.app.UPDATE_SETTINGS")
-            intent.putExtra("targetKeywords", currentTargetKeywords)
+            intent.putExtra("targetKeywords", mainActivity.currentTargetKeywords)
             intent.putExtra("targetPot", targetPot)
             intent.putExtra("enablePotFilter", enablePotFilter)
             intent.putExtra("targetHokora", targetHokora)
-            intent.putExtra("isAutoBattleEnabled", currentIsAutoBattleEnabled)
-            intent.putExtra("tapOffsetX", currentTapOffsetX)
-            intent.putExtra("tapOffsetY", currentTapOffsetY)
-            intent.putExtra("scanInterval", currentScanInterval)
-            intent.putExtra("enableResultDetection", currentEnableResultDetection)
-            intent.putExtra("autoBrightness", currentAutoBrightness)
+            intent.putExtra("isAutoBattleEnabled", mainActivity.currentIsAutoBattleEnabled)
+            intent.putExtra("tapOffsetX", mainActivity.currentTapOffsetX)
+            intent.putExtra("tapOffsetY", mainActivity.currentTapOffsetY)
+            intent.putExtra("scanInterval", mainActivity.currentScanInterval)
+            intent.putExtra("enableResultDetection", mainActivity.currentEnableResultDetection)
+            intent.putExtra("autoBrightness", mainActivity.currentAutoBrightness)
             
             // Calibration values
             call.getDouble("unlockBtnX")?.let { intent.putExtra("unlockBtnX", it.toFloat()) }
@@ -553,21 +555,21 @@ class MainActivity : BridgeActivity() {
         }
     }
 
-    private fun startMediaProjection(call: PluginCall) {
-        pendingCall = call
-        val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+    fun mainActivity.startMediaProjection(call: PluginCall) {
+        mainActivity.pendingCall = call
+        val manager = mainActivity.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         
-        if (requestCode == REQUEST_OVERLAY_PERMISSION) {
+        if (requestCode == mainActivity.REQUEST_OVERLAY_PERMISSION) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
-                pendingCall?.let { startMediaProjection(it) }
+                mainActivity.pendingCall?.let { mainActivity.startMediaProjection(it) }
             } else {
-                pendingCall?.reject("Overlay permission denied")
-                pendingCall = null
+                mainActivity.pendingCall?.reject("Overlay permission denied")
+                mainActivity.pendingCall = null
             }
         } else if (requestCode == REQUEST_MEDIA_PROJECTION) {
             if (resultCode == RESULT_OK && data != null) {
@@ -575,12 +577,12 @@ class MainActivity : BridgeActivity() {
                 intent.putExtra("EXTRA_RESULT_CODE", resultCode)
                 intent.putExtra("EXTRA_RESULT_DATA", data)
                 // 起動時に現在の設定を渡す
-                intent.putExtra("targetKeywords", currentTargetKeywords)
-                intent.putExtra("isAutoBattleEnabled", currentIsAutoBattleEnabled)
-                intent.putExtra("tapOffsetX", currentTapOffsetX)
-                intent.putExtra("tapOffsetY", currentTapOffsetY)
-                intent.putExtra("scanInterval", currentScanInterval)
-                intent.putExtra("enableResultDetection", currentEnableResultDetection)
+                intent.putExtra("targetKeywords", mainActivity.currentTargetKeywords)
+                intent.putExtra("isAutoBattleEnabled", mainActivity.currentIsAutoBattleEnabled)
+                intent.putExtra("tapOffsetX", mainActivity.currentTapOffsetX)
+                intent.putExtra("tapOffsetY", mainActivity.currentTapOffsetY)
+                intent.putExtra("scanInterval", mainActivity.currentScanInterval)
+                intent.putExtra("enableResultDetection", mainActivity.currentEnableResultDetection)
 
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -588,14 +590,14 @@ class MainActivity : BridgeActivity() {
                     } else {
                         startService(intent)
                     }
-                    pendingCall?.resolve()
+                    mainActivity.pendingCall?.resolve()
                 } catch (e: Exception) {
-                    pendingCall?.reject("Failed to start service: ${e.message}")
+                    mainActivity.pendingCall?.reject("Failed to start service: ${e.message}")
                 }
             } else {
-                pendingCall?.reject("Media projection permission denied or cancelled")
+                mainActivity.pendingCall?.reject("Media projection permission denied or cancelled")
             }
-            pendingCall = null
+            mainActivity.pendingCall = null
         }
     }
 }
