@@ -87,7 +87,16 @@ class MainActivity : BridgeActivity() {
                 when {
                     capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> {
                         res.put("type", "wifi")
-                        res.put("strength", 100) // 簡易的に100
+                        var strength = 100
+                        try {
+                            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                            val wifiInfo = wifiManager.connectionInfo
+                            if (wifiInfo != null) {
+                                val level = android.net.wifi.WifiManager.calculateSignalLevel(wifiInfo.rssi, 100)
+                                strength = level
+                            }
+                        } catch (e: Exception) {}
+                        res.put("strength", strength)
                     }
                     capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> {
                         res.put("type", "cellular")
@@ -144,11 +153,13 @@ class MainActivity : BridgeActivity() {
             if (intent?.action == "com.Kproject.app.UPDATE_STATS") {
                 val kills = intent.getIntExtra("kills", 0)
                 val exp = intent.getIntExtra("exp", 0)
+                val expGain = intent.getIntExtra("expGain", 0)
                 val log = intent.getStringExtra("log")
                 
                 val data = JSObject()
                 data.put("kills", kills)
                 data.put("exp", exp)
+                data.put("expGain", expGain)
                 if (log != null) data.put("log", log)
                 
                 val plugin = bridge.getPlugin("OverlayPlugin")?.instance as? OverlayPlugin
@@ -211,6 +222,32 @@ class MainActivity : BridgeActivity() {
         }
     }
 
+    private val calibrationReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "com.Kproject.app.CALIBRATION_FINISHED") {
+                val type = intent.getStringExtra("type") ?: ""
+                val xPct = intent.getFloatExtra("xPct", 0.5f)
+                val yPct = intent.getFloatExtra("yPct", 0.5f)
+                val r = intent.getIntExtra("colorR", 0)
+                val g = intent.getIntExtra("colorG", 0)
+                val b = intent.getIntExtra("colorB", 0)
+                
+                val data = JSObject()
+                data.put("type", type)
+                data.put("xPct", xPct.toDouble())
+                data.put("yPct", yPct.toDouble())
+                val colorArr = org.json.JSONArray()
+                colorArr.put(r)
+                colorArr.put(g)
+                colorArr.put(b)
+                data.put("color", colorArr)
+                
+                val plugin = bridge.getPlugin("OverlayPlugin")?.instance as? OverlayPlugin
+                plugin?.notifyListeners("calibrationFinished", data)
+            }
+        }
+    }
+
     private val toggleStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "com.Kproject.app.UPDATE_TOGGLE_STATE") {
@@ -237,6 +274,7 @@ class MainActivity : BridgeActivity() {
         val filterToast = IntentFilter("com.Kproject.app.SHOW_TOAST")
         val filterScanArea = IntentFilter("com.Kproject.app.UPDATE_SCAN_AREA")
         val filterToggle = IntentFilter("com.Kproject.app.UPDATE_TOGGLE_STATE")
+        val filterCalibration = IntentFilter("com.Kproject.app.CALIBRATION_FINISHED")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(statsReceiver, filterStats, Context.RECEIVER_NOT_EXPORTED)
@@ -244,12 +282,14 @@ class MainActivity : BridgeActivity() {
             registerReceiver(toastReceiver, filterToast, Context.RECEIVER_NOT_EXPORTED)
             registerReceiver(scanAreaReceiver, filterScanArea, Context.RECEIVER_NOT_EXPORTED)
             registerReceiver(toggleStateReceiver, filterToggle, Context.RECEIVER_NOT_EXPORTED)
+            registerReceiver(calibrationReceiver, filterCalibration, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(statsReceiver, filterStats)
             registerReceiver(logReceiver, filterLog)
             registerReceiver(toastReceiver, filterToast)
             registerReceiver(scanAreaReceiver, filterScanArea)
             registerReceiver(toggleStateReceiver, filterToggle)
+            registerReceiver(calibrationReceiver, filterCalibration)
         }
     }
 
@@ -261,6 +301,7 @@ class MainActivity : BridgeActivity() {
         unregisterReceiver(toastReceiver)
         unregisterReceiver(scanAreaReceiver)
         unregisterReceiver(toggleStateReceiver)
+        unregisterReceiver(calibrationReceiver)
     }
 
     private fun isAccessibilityServiceEnabled(context: Context, service: Class<out AccessibilityService>): Boolean {
@@ -302,6 +343,15 @@ class MainActivity : BridgeActivity() {
 
     @CapacitorPlugin(name = "OverlayPlugin")
     inner class OverlayPlugin : Plugin() {
+        @PluginMethod
+        fun startCalibration(call: PluginCall) {
+            val type = call.getString("type") ?: "anchor"
+            val intent = Intent("com.Kproject.app.START_CALIBRATION")
+            intent.putExtra("type", type)
+            context.sendBroadcast(intent)
+            call.resolve()
+        }
+
         @PluginMethod
         fun stopOverlay(call: PluginCall) {
             val intent = Intent(this@MainActivity, OverlayService::class.java)
@@ -440,6 +490,7 @@ class MainActivity : BridgeActivity() {
             currentEnableResultDetection = call.getBoolean("enableResultDetection", true) ?: true
             currentAutoBrightness = call.getBoolean("autoBrightness", false) ?: false
             val targetPot = call.getBoolean("targetPot", true) ?: true
+            val enablePotFilter = call.getBoolean("enablePotFilter", true) ?: true
             val targetHokora = call.getBoolean("targetHokora", true) ?: true
 
             saveSettings()
@@ -447,6 +498,7 @@ class MainActivity : BridgeActivity() {
             val intent = Intent("com.Kproject.app.UPDATE_SETTINGS")
             intent.putExtra("targetKeywords", currentTargetKeywords)
             intent.putExtra("targetPot", targetPot)
+            intent.putExtra("enablePotFilter", enablePotFilter)
             intent.putExtra("targetHokora", targetHokora)
             intent.putExtra("isAutoBattleEnabled", currentIsAutoBattleEnabled)
             intent.putExtra("tapOffsetX", currentTapOffsetX)
@@ -488,6 +540,15 @@ class MainActivity : BridgeActivity() {
                     intent.putExtra("unlockBtnColor", intArrayOf(r, g, b))
                 } catch (e: Exception) {
                     // Ignore
+                }
+            }
+
+            listOf("normalEnemyColor", "strongEnemyColor", "eventPopColor", "potColor", "hokoraColor").forEach { key ->
+                val arr = call.getArray(key)
+                if (arr != null && arr.length() == 3) {
+                    try {
+                        intent.putExtra(key, intArrayOf(arr.getInt(0), arr.getInt(1), arr.getInt(2)))
+                    } catch (e: Exception) {}
                 }
             }
             

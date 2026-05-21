@@ -27,6 +27,11 @@ interface OverlayPlugin {
     tapOffsetY: number;
     scanInterval: number;
     enableResultDetection: boolean;
+    normalEnemyColor?: number[];
+    strongEnemyColor?: number[];
+    eventPopColor?: number[];
+    potColor?: number[];
+    hokoraColor?: number[];
     ocrRetryCount?: number;
     ocrWaitTime?: number;
     enableAnchorSearch?: boolean;
@@ -36,12 +41,15 @@ interface OverlayPlugin {
     pauseScanOnBattle?: boolean;
     autoBrightness?: boolean;
     targetPot?: boolean;
+    enablePotFilter?: boolean;
     targetHokora?: boolean;
     enablePartyScan?: boolean;
     unlockBtnX?: number;
     unlockBtnY?: number;
     charCenterX?: number;
     charCenterY?: number;
+    resultBtnX?: number;
+    resultBtnY?: number;
     circleRadius?: number;
     berserkerIconX?: number;
     berserkerIconY?: number;
@@ -63,12 +71,14 @@ interface OverlayPlugin {
     network: { type: string; strength: number };
   }>;
   requestPermission(options: { type: 'overlay' | 'accessibility' | 'batteryOptimization' | 'camera' | 'screenCapture' }): Promise<void>;
+  startCalibration(options: { type: string }): Promise<void>;
   addListener(eventName: 'batteryStatusUpdate', listenerFunc: (data: { level: number; isCharging: boolean; temperature: number }) => void): Promise<any>;
-  addListener(eventName: 'statsUpdate', listenerFunc: (data: { kills: number; exp: number; avgExp: number; log?: string }) => void): Promise<any>;
+  addListener(eventName: 'statsUpdate', listenerFunc: (data: { kills: number; exp: number; expGain?: number; avgExp: number; log?: string }) => void): Promise<any>;
   addListener(eventName: 'logUpdate', listenerFunc: (data: { message: string; type: string; image?: string }) => void): Promise<any>;
   addListener(eventName: 'toastMessage', listenerFunc: (data: { message: string; type: string }) => void): Promise<any>;
   addListener(eventName: 'scanAreaUpdate', listenerFunc: (data: { x: number; y: number; w: number; h: number }) => void): Promise<any>;
   addListener(eventName: 'toggleStateUpdate', listenerFunc: (data: { isAutoBattleEnabled: boolean }) => void): Promise<any>;
+  addListener(eventName: 'calibrationFinished', listenerFunc: (data: { type: string; xPct: number; yPct: number; color: number[] }) => void): Promise<any>;
   removeAllListeners(): Promise<void>;
 }
 
@@ -98,10 +108,10 @@ type PartyMember = {
 };
 
 const initialParty: PartyMember[] = [
-  { id: 1, name: 'アルくん', job: '天地雷鳴士', level: 87, currentExp: 12000, nextExp: 162500 },
-  { id: 2, name: 'ドラちゃん', job: 'ニンジャ', level: 89, currentExp: 15000, nextExp: 183500 },
-  { id: 3, name: 'ななぽん', job: '大魔道士', level: 88, currentExp: 18000, nextExp: 242500 },
-  { id: 4, name: 'こっこやで', job: '魔剣士', level: 86, currentExp: 10000, nextExp: 129000 },
+  { id: 1, name: 'キャラ1', job: '職未設定', level: 1, currentExp: 0, nextExp: 100 },
+  { id: 2, name: 'キャラ2', job: '職未設定', level: 1, currentExp: 0, nextExp: 100 },
+  { id: 3, name: 'キャラ3', job: '職未設定', level: 1, currentExp: 0, nextExp: 100 },
+  { id: 4, name: 'キャラ4', job: '職未設定', level: 1, currentExp: 0, nextExp: 100 },
 ];
 
 export default function App() {
@@ -133,27 +143,19 @@ export default function App() {
   const [pauseScanOnBattle, setPauseScanOnBattle] = useState(true);
   
   // Battle Target Filters
-  const [targetMetal, setTargetMetal] = useState(true);
-  const [targetKakutei, setTargetKakutei] = useState(true);
-  const [targetKoukaku, setTargetKoukaku] = useState(true);
   const [targetNormalEnemy, setTargetNormalEnemy] = useState(true);
   const [targetStrongEnemy, setTargetStrongEnemy] = useState(true);
   const [targetEventPop, setTargetEventPop] = useState(true);
   const [targetPot, setTargetPot] = useState(true);
   const [targetHokora, setTargetHokora] = useState(true);
-  const [targetOther, setTargetOther] = useState(false);
 
   // Tap Priorities
   const defaultPriorities = [
-    { id: 'metal', label: 'メタルモンスター' },
-    { id: 'kakutei', label: 'かくてい！　モンスター' },
-    { id: 'koukaku', label: 'こうかく！　モンスター' },
     { id: 'normal', label: '！ 通常の敵' },
     { id: 'strong', label: 'どこでも 強敵' },
     { id: 'event', label: '··· イベントポップ' },
     { id: 'pot', label: '壺' },
-    { id: 'hokora', label: 'ほこら' },
-    { id: 'other', label: '※ それ以外' }
+    { id: 'hokora', label: 'ほこら' }
   ];
 
   const [tapPriorities1, setTapPriorities1] = useState(defaultPriorities);
@@ -189,7 +191,7 @@ export default function App() {
   
   // UI States
   const [appStatus, setAppStatus] = useState<'WAIT' | 'WALK_MODE'>('WAIT');
-  const [calibrationState, setCalibrationState] = useState<'IDLE' | 'UNLOCK_BTN' | 'CHAR_CENTER' | 'CIRCLE_EDGE' | 'OCR_SEARCHING' | 'BERSERKER_ICON' | 'BERSERKER_ITEM'>('IDLE');
+  const [calibrationState, setCalibrationState] = useState<'IDLE' | 'UNLOCK_BTN' | 'CHAR_CENTER' | 'CIRCLE_EDGE' | 'OCR_SEARCHING' | 'BERSERKER_ICON' | 'BERSERKER_ITEM' | 'RESULT_BTN'>('IDLE');
   const [unlockBtnPos, setUnlockBtnPos] = useState(() => {
     const saved = localStorage.getItem('unlockBtnPos');
     return saved ? JSON.parse(saved) : { x: 0.5, y: 0.92 };
@@ -202,6 +204,10 @@ export default function App() {
     const saved = localStorage.getItem('charCenterPos');
     return saved ? JSON.parse(saved) : { x: 0.5, y: 0.6 };
   });
+  const [resultBtnPos, setResultBtnPos] = useState(() => {
+    const saved = localStorage.getItem('resultBtnPos');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [circleRadius, setCircleRadius] = useState(() => {
     const saved = localStorage.getItem('circleRadius');
     return saved ? parseFloat(saved) : 0.25;
@@ -212,6 +218,27 @@ export default function App() {
   });
 
   // Berserker Mode States
+  const [normalEnemyColor, setNormalEnemyColor] = useState(() => {
+    const saved = localStorage.getItem('normalEnemyColor');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [strongEnemyColor, setStrongEnemyColor] = useState(() => {
+    const saved = localStorage.getItem('strongEnemyColor');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [eventPopColor, setEventPopColor] = useState(() => {
+    const saved = localStorage.getItem('eventPopColor');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [potColor, setPotColor] = useState(() => {
+    const saved = localStorage.getItem('potColor');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [hokoraColor, setHokoraColor] = useState(() => {
+    const saved = localStorage.getItem('hokoraColor');
+    return saved ? JSON.parse(saved) : null;
+  });
+
   const [isBerserkerMode, setIsBerserkerMode] = useState(() => localStorage.getItem('isBerserkerMode') === 'true');
   const [berserkerIconPos, setBerserkerIconPos] = useState(() => {
     const saved = localStorage.getItem('berserkerIconPos');
@@ -262,6 +289,7 @@ export default function App() {
   const isProcessingRef = useRef(false);
   const lastProcessedTimeRef = useRef(0);
   const ocrTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const appLogsRef = useRef<any[]>([]);
 
   const addLog = (message: string, type: string = 'info') => {
     const newLog = {
@@ -278,6 +306,10 @@ export default function App() {
     let batteryListener: any = null;
     let statsListener: any = null;
     let logListener: any = null;
+    let toastListener: any = null;
+    let scanAreaListener: any = null;
+    let toggleStateListener: any = null;
+    let calibrationListener: any = null;
 
     const setupListeners = async () => {
       if (Capacitor.isNativePlatform()) {
@@ -291,7 +323,35 @@ export default function App() {
           statsListener = await OverlayPlugin.addListener('statsUpdate', (data) => {
             setTotalKills(data.kills);
             setTotalExp(data.exp);
-            setAvgExp(data.avgExp);
+            
+            if (data.expGain && data.expGain > 0) { // Distribute to party
+              setParty(prevParty => {
+                 const newParty = prevParty.map(member => {
+                    let newExp = member.currentExp + data.expGain;
+                    let newLevel = member.level;
+                    let newNextExp = member.nextExp;
+                    while (newExp >= newNextExp) {
+                      newExp -= newNextExp;
+                      newLevel += 1;
+                      newNextExp = Math.floor(newNextExp * 1.1);
+                    }
+                    return { ...member, level: newLevel, currentExp: newExp, nextExp: newNextExp };
+                 });
+                 
+                 appLogsRef.current.push({
+                   timestamp: new Date().toLocaleString('ja-JP'),
+                   char1Name: newParty[0]?.name || '', char1Exp: newParty[0]?.currentExp || 0,
+                   char2Name: newParty[1]?.name || '', char2Exp: newParty[1]?.currentExp || 0,
+                   char3Name: newParty[2]?.name || '', char3Exp: newParty[2]?.currentExp || 0,
+                   char4Name: newParty[3]?.name || '', char4Exp: newParty[3]?.currentExp || 0,
+                   totalKills: data.kills
+                 });
+                 if (appLogsRef.current.length > 1000) appLogsRef.current.shift();
+                 
+                 return newParty;
+              });
+            }
+            
             if (data.log) {
               addLog(data.log, 'info');
               setCurrentStatus(data.log);
@@ -307,7 +367,7 @@ export default function App() {
             }
           });
 
-          const toastListener = await OverlayPlugin.addListener('toastMessage', (data) => {
+          toastListener = await OverlayPlugin.addListener('toastMessage', (data) => {
             const id = Math.random().toString(36).substr(2, 9);
             setToasts(prev => [...prev, { id, message: data.message, type: data.type }]);
             setTimeout(() => {
@@ -315,12 +375,59 @@ export default function App() {
             }, 3000);
           });
 
-          const scanAreaListener = await OverlayPlugin.addListener('scanAreaUpdate', (data) => {
+          scanAreaListener = await OverlayPlugin.addListener('scanAreaUpdate', (data) => {
             setScanArea({ x: data.x, y: data.y, w: data.w, h: data.h });
           });
 
-          const toggleStateListener = await OverlayPlugin.addListener('toggleStateUpdate', (data) => {
+          toggleStateListener = await OverlayPlugin.addListener('toggleStateUpdate', (data) => {
             setIsAutoBattleEnabled(data.isAutoBattleEnabled);
+          });
+          
+          calibrationListener = await OverlayPlugin.addListener('calibrationFinished', (data) => {
+            if (data.type === 'anchor') {
+               setUnlockBtnPos({ x: data.xPct, y: data.yPct });
+               const newColor = { r: data.color[0], g: data.color[1], b: data.color[2] };
+               setUnlockBtnColor(newColor);
+               localStorage.setItem('unlockBtnPos', JSON.stringify({ x: data.xPct, y: data.yPct }));
+               localStorage.setItem('unlockBtnColor', JSON.stringify(newColor));
+               
+               const toastId = Date.now().toString();
+               setToasts(prev => [...prev, { id: toastId, message: `アンカー位置と色を記憶しました。RGB(${newColor.r},${newColor.g},${newColor.b})`, type: 'success' }]);
+               setTimeout(() => setToasts(prev => prev.filter(t => t.id !== toastId)), 3000);
+            } else if (data.type === 'charCenter') {
+               setCharCenterPos({ x: data.xPct, y: data.yPct });
+               localStorage.setItem('charCenterPos', JSON.stringify({ x: data.xPct, y: data.yPct }));
+               const toastId = Date.now().toString();
+               setToasts(prev => [...prev, { id: toastId, message: `キャラクターの中心位置を記憶しました`, type: 'success' }]);
+               setTimeout(() => setToasts(prev => prev.filter(t => t.id !== toastId)), 3000);
+            } else if (data.type === 'result') {
+               setResultBtnPos({ x: data.xPct, y: data.yPct });
+               localStorage.setItem('resultBtnPos', JSON.stringify({ x: data.xPct, y: data.yPct }));
+               const toastId = Date.now().toString();
+               setToasts(prev => [...prev, { id: toastId, message: `リザルト画面のタップ位置を記憶しました`, type: 'success' }]);
+               setTimeout(() => setToasts(prev => prev.filter(t => t.id !== toastId)), 3000);
+            } else if (['NORMAL_ENEMY', 'STRONG_ENEMY', 'EVENT_POP', 'POT', 'HOKORA'].includes(data.type)) {
+               const newColor = { r: data.color[0], g: data.color[1], b: data.color[2] };
+               if (data.type === 'NORMAL_ENEMY') {
+                 setNormalEnemyColor(newColor);
+                 localStorage.setItem('normalEnemyColor', JSON.stringify(newColor));
+               } else if (data.type === 'STRONG_ENEMY') {
+                 setStrongEnemyColor(newColor);
+                 localStorage.setItem('strongEnemyColor', JSON.stringify(newColor));
+               } else if (data.type === 'EVENT_POP') {
+                 setEventPopColor(newColor);
+                 localStorage.setItem('eventPopColor', JSON.stringify(newColor));
+               } else if (data.type === 'POT') {
+                 setPotColor(newColor);
+                 localStorage.setItem('potColor', JSON.stringify(newColor));
+               } else if (data.type === 'HOKORA') {
+                 setHokoraColor(newColor);
+                 localStorage.setItem('hokoraColor', JSON.stringify(newColor));
+               }
+               const toastId = Date.now().toString();
+               setToasts(prev => [...prev, { id: toastId, message: `${data.type} の色を登録しました RGB(${newColor.r},${newColor.g},${newColor.b})`, type: 'success' }]);
+               setTimeout(() => setToasts(prev => prev.filter(t => t.id !== toastId)), 3000);
+            }
           });
 
           // Initial status check
@@ -345,6 +452,10 @@ export default function App() {
       batteryListener?.remove();
       statsListener?.remove();
       logListener?.remove();
+      toastListener?.remove();
+      scanAreaListener?.remove();
+      toggleStateListener?.remove();
+      calibrationListener?.remove();
     };
   }, []);
 
@@ -371,15 +482,11 @@ export default function App() {
     if (Capacitor.isNativePlatform()) {
       const enabledKeywords = tapPriorities
         .filter(p => {
-          if (p.id === 'metal') return targetMetal;
-          if (p.id === 'kakutei') return targetKakutei;
-          if (p.id === 'koukaku') return targetKoukaku;
           if (p.id === 'normal') return targetNormalEnemy;
           if (p.id === 'strong') return targetStrongEnemy;
           if (p.id === 'event') return targetEventPop;
           if (p.id === 'pot') return targetPot;
           if (p.id === 'hokora') return targetHokora;
-          if (p.id === 'other') return targetOther;
           return false;
         })
         .map(p => p.label)
@@ -401,12 +508,20 @@ export default function App() {
         pauseScanOnBattle: pauseScanOnBattle,
         autoBrightness: autoBrightness,
         targetPot: targetPot,
+        enablePotFilter: enablePotFilter,
         targetHokora: targetHokora,
         enablePartyScan: enablePartyScan,
         unlockBtnX: unlockBtnPos.x,
         unlockBtnY: unlockBtnPos.y,
         charCenterX: charCenterPos.x,
         charCenterY: charCenterPos.y,
+        resultBtnX: resultBtnPos?.x,
+        resultBtnY: resultBtnPos?.y,
+        normalEnemyColor: normalEnemyColor ? [normalEnemyColor.r, normalEnemyColor.g, normalEnemyColor.b] : undefined,
+        strongEnemyColor: strongEnemyColor ? [strongEnemyColor.r, strongEnemyColor.g, strongEnemyColor.b] : undefined,
+        eventPopColor: eventPopColor ? [eventPopColor.r, eventPopColor.g, eventPopColor.b] : undefined,
+        potColor: potColor ? [potColor.r, potColor.g, potColor.b] : undefined,
+        hokoraColor: hokoraColor ? [hokoraColor.r, hokoraColor.g, hokoraColor.b] : undefined,
         circleRadius: circleRadius,
         isBerserkerMode: isBerserkerMode,
         berserkerIconX: berserkerIconPos.x,
@@ -423,9 +538,10 @@ export default function App() {
     isAutoBattleEnabled, targetTapOffset, tapPriorities, scanInterval, 
     enableResultDetection, ocrRetryCount, ocrWaitTime, enableAnchorSearch,
     wideScanArea, enableRegexFilter, enableDictCorrection, pauseScanOnBattle,
-    autoBrightness, targetMetal, targetKakutei, targetKoukaku, targetNormalEnemy,
-    targetStrongEnemy, targetEventPop, targetPot, targetHokora, targetOther,
-    unlockBtnPos, charCenterPos, circleRadius, enablePartyScan
+    autoBrightness, targetNormalEnemy,
+    targetStrongEnemy, targetEventPop, targetPot, enablePotFilter, targetHokora,
+    unlockBtnPos, charCenterPos, resultBtnPos, circleRadius, enablePartyScan,
+    normalEnemyColor, strongEnemyColor, eventPopColor, potColor, hokoraColor
   ]);
 
   // Initialize Tesseract Worker
@@ -622,6 +738,8 @@ export default function App() {
 
   // Battery & Temperature Simulation
   useInterval(() => {
+    if (Capacitor.isNativePlatform()) return; // Native data is injected via OverlayPlugin listener
+    
     setBattery(prev => Math.max(0, prev - (isAutoRun ? (isEcoMode ? 0.02 : 0.08) : 0.01)));
     
     if (isAutoRun && !isEcoMode) {
@@ -834,9 +952,7 @@ export default function App() {
               });
 
               try {
-                const logsStr = localStorage.getItem('dq_macro_logs');
-                let logs = logsStr ? JSON.parse(logsStr) : [];
-                logs.push({
+                appLogsRef.current.push({
                   timestamp: new Date().toLocaleString('ja-JP'),
                   char1Name: newParty[0]?.name || '',
                   char1Exp: newParty[0]?.currentExp || 0,
@@ -848,8 +964,7 @@ export default function App() {
                   char4Exp: newParty[3]?.currentExp || 0,
                   totalKills: newKills
                 });
-                if (logs.length > 1000) logs = logs.slice(logs.length - 1000);
-                localStorage.setItem('dq_macro_logs', JSON.stringify(logs));
+                if (appLogsRef.current.length > 1000) appLogsRef.current.shift();
               } catch (e) {
                 console.error('Failed to save log', e);
               }
@@ -888,36 +1003,25 @@ export default function App() {
     }
   }, effectiveScanInterval * 1000 * 10);
 
-  // OCR Scan Mock with New Specs
+  // UI visual feedback only (Actual syncing is done via OverlayService party scan)
   const handleOCRScan = (memberId: number) => {
     setScanningMemberId(memberId);
-    // 1. Wait for level up animation lag
-    setTimeout(() => {
-      // 2. Retry simulation
-      let retries = 0;
-      const tryScan = () => {
-        if (retries >= ocrRetryCount) {
-          setScanningMemberId(null);
-          // Simulate data confirmation after dictionary correction
-          setParty(prev => prev.map(m => 
-            m.id === memberId 
-              ? { ...m, currentExp: Math.max(0, Math.floor(m.currentExp * 0.95)) }
-              : m
-          ));
-          return;
-        }
-        retries++;
-        setTimeout(tryScan, 500); // Retry interval
-      };
-      tryScan();
-    }, ocrWaitTime * 1000);
+    let retries = 0;
+    const tryScan = () => {
+      if (retries >= ocrRetryCount) {
+        setScanningMemberId(null);
+        return;
+      }
+      retries++;
+      setTimeout(tryScan, 500); 
+    };
+    tryScan();
   };
 
   // CSV Export
   const exportCSV = () => {
     try {
-      const logsStr = localStorage.getItem('dq_macro_logs');
-      const logs = logsStr ? JSON.parse(logsStr) : [];
+      const logs = appLogsRef.current;
       
       if (logs.length === 0) {
         alert('出力するログがありません。');
@@ -1063,6 +1167,35 @@ export default function App() {
       setCalibrationState('IDLE');
       setScreenshotBase64(null);
       alert('においぶくろのタップ位置を記憶しました！');
+    } else if (calibrationState === 'RESULT_BTN') {
+      setResultBtnPos({ x: xPct, y: yPct });
+      localStorage.setItem('resultBtnPos', JSON.stringify({ x: xPct, y: yPct }));
+      setCalibrationState('IDLE');
+      setScreenshotBase64(null);
+      alert('リザルト画面のタップ位置を記憶しました！');
+    } else if (['NORMAL_ENEMY', 'STRONG_ENEMY', 'EVENT_POP', 'POT', 'HOKORA'].includes(calibrationState)) {
+      const color = checkPixelColor(source, xPct, yPct);
+      if (color) {
+        if (calibrationState === 'NORMAL_ENEMY') {
+          setNormalEnemyColor(color);
+          localStorage.setItem('normalEnemyColor', JSON.stringify(color));
+        } else if (calibrationState === 'STRONG_ENEMY') {
+          setStrongEnemyColor(color);
+          localStorage.setItem('strongEnemyColor', JSON.stringify(color));
+        } else if (calibrationState === 'EVENT_POP') {
+          setEventPopColor(color);
+          localStorage.setItem('eventPopColor', JSON.stringify(color));
+        } else if (calibrationState === 'POT') {
+          setPotColor(color);
+          localStorage.setItem('potColor', JSON.stringify(color));
+        } else if (calibrationState === 'HOKORA') {
+          setHokoraColor(color);
+          localStorage.setItem('hokoraColor', JSON.stringify(color));
+        }
+        alert(`${calibrationState} をRGB(${color.r},${color.g},${color.b})で記憶しました！`);
+        setCalibrationState('IDLE');
+        setScreenshotBase64(null);
+      }
     }
   };
 
@@ -1178,6 +1311,8 @@ export default function App() {
               {calibrationState === 'CIRCLE_EDGE' && 'サークルの白い線（円周）のどこかを\nタップしてください。'}
               {calibrationState === 'BERSERKER_ICON' && 'メイン画面の「匂い袋アイコン」を\nタップしてください。'}
               {calibrationState === 'BERSERKER_ITEM' && 'アイテム選択画面の「においぶくろ」を\nタップしてください。'}
+              {calibrationState === 'RESULT_BTN' && '戦闘終了リザルト画面で次へ進むための\nタップ位置を選択してください。'}
+              {['NORMAL_ENEMY', 'STRONG_ENEMY', 'EVENT_POP', 'POT', 'HOKORA'].includes(calibrationState) && '対象物の「色」を記憶させるため、対象の\n中心をタップしてください。'}
             </div>
           </div>
         </div>
@@ -1539,15 +1674,11 @@ export default function App() {
                           // オーバーレイ起動後に現在の設定を送信
                           await OverlayPlugin.updateSettings({
                             targetKeywords: tapPriorities.filter(p => {
-                              if (p.id === 'metal') return targetMetal;
-                              if (p.id === 'kakutei') return targetKakutei;
-                              if (p.id === 'koukaku') return targetKoukaku;
                               if (p.id === 'normal') return targetNormalEnemy;
                               if (p.id === 'strong') return targetStrongEnemy;
                               if (p.id === 'event') return targetEventPop;
                               if (p.id === 'pot') return targetPot;
                               if (p.id === 'hokora') return targetHokora;
-                              if (p.id === 'other') return targetOther;
                               return false;
                             }).map(p => p.label).join(',') || '！',
                             isAutoBattleEnabled: isAutoBattleEnabled,
@@ -1556,12 +1687,20 @@ export default function App() {
                             scanInterval: scanInterval,
                             enableResultDetection: enableResultDetection,
                             targetPot: targetPot,
+                            enablePotFilter: enablePotFilter,
                             targetHokora: targetHokora,
                             enablePartyScan: enablePartyScan,
                             unlockBtnX: unlockBtnPos.x,
                             unlockBtnY: unlockBtnPos.y,
                             charCenterX: charCenterPos.x,
                             charCenterY: charCenterPos.y,
+                            resultBtnX: resultBtnPos?.x,
+                            resultBtnY: resultBtnPos?.y,
+                            normalEnemyColor: normalEnemyColor ? [normalEnemyColor.r, normalEnemyColor.g, normalEnemyColor.b] : undefined,
+                            strongEnemyColor: strongEnemyColor ? [strongEnemyColor.r, strongEnemyColor.g, strongEnemyColor.b] : undefined,
+                            eventPopColor: eventPopColor ? [eventPopColor.r, eventPopColor.g, eventPopColor.b] : undefined,
+                            potColor: potColor ? [potColor.r, potColor.g, potColor.b] : undefined,
+                            hokoraColor: hokoraColor ? [hokoraColor.r, hokoraColor.g, hokoraColor.b] : undefined,
                             circleRadius: circleRadius,
                             isBerserkerMode: isBerserkerMode,
                             berserkerIconX: berserkerIconPos.x,
@@ -1689,9 +1828,10 @@ export default function App() {
                             onClick={async () => {
                               setShowSettings(false);
                               if (Capacitor.isNativePlatform()) {
-                                await startCapture();
+                                OverlayPlugin.startCalibration({ type: 'anchor' });
+                              } else {
+                                setCalibrationState('UNLOCK_BTN');
                               }
-                              setCalibrationState('UNLOCK_BTN');
                             }}
                             className="px-2 py-1 bg-blue-900/40 text-blue-400 border border-blue-800 rounded text-[10px] font-bold hover:bg-blue-900/60 transition-colors"
                           >
@@ -1699,11 +1839,16 @@ export default function App() {
                           </button>
                         </div>
                       </div>
-                      <p className="text-[10px] text-gray-500 leading-relaxed">
-                        {Capacitor.isNativePlatform() 
-                          ? '「手動設定」を押すと現在の画面をキャプチャし、タップで判定位置と色を記憶させます。'
-                          : 'ゲーム画面の「解除する」ボタンの位置と色を記憶させ、自動戦闘の監視精度を100%にします。'}
-                      </p>
+                      <details className="group mt-1.5">
+                        <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 transition-colors list-none [&::-webkit-details-marker]:hidden flex items-center gap-1">
+                          <HelpCircle size={10} /> Tips
+                        </summary>
+                        <div className="text-[10px] text-gray-400 mt-1 pl-2 border-l-2 border-[#333] leading-relaxed">
+                          {Capacitor.isNativePlatform() 
+                            ? '「手動設定」を押すと現在の画面をキャプチャし、タップで判定位置と色を記憶させます。'
+                            : 'ゲーム画面の「解除する」ボタンの位置と色を記憶させ、自動戦闘の監視精度を100%にします。'}
+                        </div>
+                      </details>
                     </div>
 
                     {/* キャラクター＆サークル設定 */}
@@ -1714,20 +1859,26 @@ export default function App() {
                           onClick={async () => {
                             setShowSettings(false);
                             if (Capacitor.isNativePlatform()) {
-                              await startCapture();
+                              OverlayPlugin.startCalibration({ type: 'charCenter' });
+                            } else {
+                              setCalibrationState('CHAR_CENTER');
                             }
-                            setCalibrationState('CHAR_CENTER');
                           }}
                           className="px-3 py-1 bg-purple-900/40 text-purple-400 border border-purple-800 rounded text-xs font-bold hover:bg-purple-900/60 transition-colors"
                         >
                           設定する
                         </button>
                       </div>
-                      <p className="text-[10px] text-gray-500 leading-relaxed mb-3">
-                        {Capacitor.isNativePlatform()
-                          ? 'Android版では、オーバーレイ上の設定からタップ位置を調整してください。'
-                          : 'キャラクターの足元と、サークルの大きさを記憶させます。'}
-                      </p>
+                      <details className="group mt-1.5 mb-3">
+                        <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 transition-colors list-none [&::-webkit-details-marker]:hidden flex items-center gap-1">
+                          <HelpCircle size={10} /> Tips
+                        </summary>
+                        <div className="text-[10px] text-gray-400 mt-1 pl-2 border-l-2 border-[#333] leading-relaxed">
+                          {Capacitor.isNativePlatform()
+                            ? 'Android版では、オーバーレイ上の設定からタップ位置を調整してください。'
+                            : 'キャラクターの足元と、サークルの大きさを記憶させます。'}
+                        </div>
+                      </details>
                       
                       <div className="space-y-2 border-t border-[#222] pt-3">
                         <div className="flex items-center justify-between">
@@ -1745,21 +1896,52 @@ export default function App() {
                           }}
                           className="w-full accent-emerald-500"
                         />
-                        <p className="text-[10px] text-gray-500">
-                          サークルの外側、どのくらいの範囲までタップして寄せるかを設定します。（1.0でサークル内のみ）
-                        </p>
+                        <details className="group mt-1.5">
+                          <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 transition-colors list-none [&::-webkit-details-marker]:hidden flex items-center gap-1">
+                            <HelpCircle size={10} /> Tips
+                          </summary>
+                          <div className="text-[10px] text-gray-400 mt-1 pl-2 border-l-2 border-[#333] leading-relaxed">
+                            サークルの外側、どのくらいの範囲までタップして寄せるかを設定します。（1.0でサークル内のみ）
+                          </div>
+                        </details>
                       </div>
                     </div>
 
                     <div>
                       <div className="flex items-center justify-between">
                         <label className="text-xs text-gray-400">リザルト検知</label>
-                        <button 
-                          onClick={() => setEnableResultDetection(!enableResultDetection)}
-                          className={`px-3 py-1 rounded text-xs font-bold ${enableResultDetection ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
-                        >
-                          {enableResultDetection ? 'ON' : 'OFF'}
-                        </button>
+                        <div className="flex gap-2">
+                          {!Capacitor.isNativePlatform() && (
+                            <button 
+                              onClick={() => {
+                                setShowSettings(false);
+                                setCalibrationState('RESULT_BTN');
+                              }}
+                              className="px-2 py-1 bg-amber-900/40 text-amber-400 border border-amber-800 rounded text-[10px] font-bold hover:bg-amber-900/60 transition-colors"
+                            >
+                              手動設定
+                            </button>
+                          )}
+                          <button 
+                            onClick={async () => {
+                              setShowSettings(false);
+                              if (Capacitor.isNativePlatform()) {
+                                OverlayPlugin.startCalibration({ type: 'result' });
+                              } else {
+                                setCalibrationState('RESULT_BTN');
+                              }
+                            }}
+                            className="px-3 py-1 bg-amber-900/40 text-amber-400 border border-amber-800 rounded text-xs font-bold hover:bg-amber-900/60 transition-colors"
+                          >
+                            設定する
+                          </button>
+                          <button 
+                            onClick={() => setEnableResultDetection(!enableResultDetection)}
+                            className={`px-3 py-1 rounded text-xs font-bold ${enableResultDetection ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
+                          >
+                            {enableResultDetection ? 'ON' : 'OFF'}
+                          </button>
+                        </div>
                       </div>
                       <details className="group mt-1.5">
                         <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 transition-colors list-none [&::-webkit-details-marker]:hidden flex items-center gap-1">
@@ -1804,9 +1986,14 @@ export default function App() {
                         className="w-full accent-emerald-500"
                       />
                       <div className="text-right text-xs mt-1 text-emerald-400">{targetTapOffset}%</div>
-                      <p className="text-[10px] text-gray-500">
-                        キャラクター位置からのY軸オフセットを設定します。（マイナスで上方向）
-                      </p>
+                      <details className="group mt-1.5">
+                        <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 transition-colors list-none [&::-webkit-details-marker]:hidden flex items-center gap-1">
+                          <HelpCircle size={10} /> Tips
+                        </summary>
+                        <div className="text-[10px] text-gray-400 mt-1 pl-2 border-l-2 border-[#333] leading-relaxed">
+                          キャラクター位置からのY軸オフセットを設定します。（マイナスで上方向）
+                        </div>
+                      </details>
                     </div>
 
                     <div>
@@ -2020,16 +2207,34 @@ export default function App() {
                         設定する
                       </button>
                     </div>
+                    <details className="group mt-2">
+                      <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 transition-colors list-none [&::-webkit-details-marker]:hidden flex items-center gap-1">
+                        <HelpCircle size={10} /> Tips
+                      </summary>
+                      <div className="text-[10px] text-gray-400 mt-1 pl-2 border-l-2 border-[#333] leading-relaxed">
+                        定期的に匂い袋のアイコンをタップし、経験値効率をさらに上げるモードです。
+                      </div>
+                    </details>
                   </div>
 
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs text-gray-400">つぼフィルタ (OpenCV)</label>
-                    <button 
-                      onClick={() => setEnablePotFilter(!enablePotFilter)}
-                      className={`px-3 py-1 rounded text-xs font-bold ${enablePotFilter ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
-                    >
-                      {enablePotFilter ? 'ON' : 'OFF'}
-                    </button>
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs text-gray-400">つぼカラーフィルター (ハイブリッド判定)</label>
+                      <button 
+                        onClick={() => setEnablePotFilter(!enablePotFilter)}
+                        className={`px-3 py-1 rounded text-xs font-bold ${enablePotFilter ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
+                      >
+                        {enablePotFilter ? 'ON' : 'OFF'}
+                      </button>
+                    </div>
+                    <details className="group mt-1.5">
+                      <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 transition-colors list-none [&::-webkit-details-marker]:hidden flex items-center gap-1">
+                        <HelpCircle size={10} /> Tips
+                      </summary>
+                      <div className="text-[10px] text-gray-400 mt-1 pl-2 border-l-2 border-[#333] leading-relaxed">
+                        テキストで壺を認識したあと、独自の色判定も組み合わせて正確性を上げます。
+                      </div>
+                    </details>
                   </div>
                   <div>
                     <div className="flex items-center justify-between">
@@ -2052,81 +2257,63 @@ export default function App() {
                   </div>
 
                   <div className="pt-2 border-t border-[#333]">
-                    <div className="text-xs text-gray-400 mb-2">タップ対象フィルタ</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button 
-                        onClick={() => setTargetMetal(!targetMetal)}
-                        className={`px-2 py-1.5 rounded text-[10px] font-bold flex items-center justify-between ${targetMetal ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
-                      >
-                        <span>メタルモンスター</span>
-                        <span>{targetMetal ? 'ON' : 'OFF'}</span>
-                      </button>
-                      <button 
-                        onClick={() => setTargetKakutei(!targetKakutei)}
-                        className={`px-2 py-1.5 rounded text-[10px] font-bold flex items-center justify-between ${targetKakutei ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
-                      >
-                        <span>かくてい！</span>
-                        <span>{targetKakutei ? 'ON' : 'OFF'}</span>
-                      </button>
-                      <button 
-                        onClick={() => setTargetKoukaku(!targetKoukaku)}
-                        className={`px-2 py-1.5 rounded text-[10px] font-bold flex items-center justify-between ${targetKoukaku ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
-                      >
-                        <span>こうかく！</span>
-                        <span>{targetKoukaku ? 'ON' : 'OFF'}</span>
-                      </button>
-                      <button 
-                        onClick={() => setTargetNormalEnemy(!targetNormalEnemy)}
-                        className={`px-2 py-1.5 rounded text-[10px] font-bold flex items-center justify-between ${targetNormalEnemy ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
-                      >
-                        <span>！ 通常の敵</span>
-                        <span>{targetNormalEnemy ? 'ON' : 'OFF'}</span>
-                      </button>
-                      <button 
-                        onClick={() => setTargetStrongEnemy(!targetStrongEnemy)}
-                        className={`px-2 py-1.5 rounded text-[10px] font-bold flex items-center justify-between ${targetStrongEnemy ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
-                      >
-                        <span>どこでも 強敵</span>
-                        <span>{targetStrongEnemy ? 'ON' : 'OFF'}</span>
-                      </button>
-                      <button 
-                        onClick={() => setTargetEventPop(!targetEventPop)}
-                        className={`px-2 py-1.5 rounded text-[10px] font-bold flex items-center justify-between ${targetEventPop ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
-                      >
-                        <span>··· イベントポップ</span>
-                        <span>{targetEventPop ? 'ON' : 'OFF'}</span>
-                      </button>
-                      <button 
-                        onClick={() => setTargetPot(!targetPot)}
-                        className={`px-2 py-1.5 rounded text-[10px] font-bold flex items-center justify-between ${targetPot ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
-                      >
-                        <span>壺</span>
-                        <span>{targetPot ? 'ON' : 'OFF'}</span>
-                      </button>
-                      <button 
-                        onClick={() => setTargetHokora(!targetHokora)}
-                        className={`px-2 py-1.5 rounded text-[10px] font-bold flex items-center justify-between ${targetHokora ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
-                      >
-                        <div className="flex flex-col items-start">
-                          <span>ほこら</span>
-                          <span className="text-[7px] font-normal text-emerald-500/80">※建物オブジェクトとして認識</span>
-                        </div>
-                        <span>{targetHokora ? 'ON' : 'OFF'}</span>
-                      </button>
-                      <button 
-                        onClick={() => setTargetOther(!targetOther)}
-                        className={`px-2 py-1.5 rounded text-[10px] font-bold flex items-center justify-between col-span-2 ${targetOther ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
-                      >
-                        <span>※ それ以外</span>
-                        <span>{targetOther ? 'ON' : 'OFF'}</span>
-                      </button>
+                    <div className="text-xs text-gray-400 mb-2 flex items-center justify-between">
+                      <span>タップ対象フィルタ</span>
                     </div>
-                    <details className="group mt-2">
-                      <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 transition-colors list-none [&::-webkit-details-marker]:hidden flex items-center gap-1">
-                        <HelpCircle size={10} /> Tips
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { label: '！ 通常の敵', state: targetNormalEnemy, set: setTargetNormalEnemy, type: 'NORMAL_ENEMY', color: normalEnemyColor },
+                        { label: 'どこでも 強敵', state: targetStrongEnemy, set: setTargetStrongEnemy, type: 'STRONG_ENEMY', color: strongEnemyColor },
+                        { label: '··· イベント', state: targetEventPop, set: setTargetEventPop, type: 'EVENT_POP', color: eventPopColor },
+                        { label: '壺', state: targetPot, set: setTargetPot, type: 'POT', color: potColor },
+                        { label: 'ほこら', state: targetHokora, set: setTargetHokora, type: 'HOKORA', color: hokoraColor },
+                      ].map(item => (
+                        <div key={item.label} className={`flex items-center justify-between p-1.5 rounded border ${item.state ? 'bg-emerald-900/20 border-emerald-800/50' : 'bg-[#222] border-[#333]'}`}>
+                          <button 
+                            onClick={() => item.set(!item.state)}
+                            className={`flex flex-col items-start gap-0.5 w-full text-left`}
+                          >
+                            <span className={`text-[10px] font-bold ${item.state ? 'text-emerald-400' : 'text-gray-500'}`}>{item.label}</span>
+                            <span className={`text-[9px] ${item.state ? 'text-emerald-500/70' : 'text-gray-600'}`}>{item.state ? 'ON' : 'OFF'}</span>
+                          </button>
+                          <div className="flex flex-col items-end gap-1 ml-1 shrink-0">
+                            {item.color && (
+                               <div className="w-3 h-3 rounded-full border border-gray-600 mb-0.5 shadow-sm" style={{ backgroundColor: `rgb(${item.color.r},${item.color.g},${item.color.b})` }} />
+                            )}
+                            <button 
+                              onClick={async () => {
+                                setShowSettings(false);
+                                if (Capacitor.isNativePlatform()) {
+                                  OverlayPlugin.startCalibration({ type: item.type });
+                                } else {
+                                  setCalibrationState(item.type as any);
+                                }
+                              }}
+                              className="px-1.5 py-0.5 bg-amber-900/40 text-amber-400 border border-amber-800 rounded text-[8px] font-bold whitespace-nowrap hover:bg-amber-900/60 transition-colors"
+                            >
+                              色設定
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <details className="group mt-3" open>
+                      <summary className="text-[10px] text-amber-500 cursor-pointer hover:text-amber-400 transition-colors list-none [&::-webkit-details-marker]:hidden flex items-center gap-1 font-bold">
+                        <HelpCircle size={10} /> 対象の認識設定について
                       </summary>
-                      <div className="text-[10px] text-gray-400 mt-1 pl-2 border-l-2 border-[#333] leading-relaxed">
-                        スキャンしてタップする対象（モンスター、壺、ほこらなど）を個別にON/OFFできます。
+                      <div className="text-[10px] text-gray-400 mt-1.5 pl-2 border-l-2 border-amber-900/50 flex flex-col gap-1.5 leading-relaxed bg-amber-900/10 p-2 rounded-r">
+                        <p>
+                          <strong className="text-amber-400">※重要※</strong>
+                          文字やアイコンの<strong className="text-gray-200">色は「画面のズーム状態(寄り・引き)」や「天候・時間帯のフェード」によって大きく変化</strong>します。<br/>
+                          検知しづらい場合は、現在の時間帯やズーム状態で再度「色設定」を行ってください。
+                        </p>
+                        <p>
+                          ・無表記の強敵は、文字情報がないため<strong className="text-gray-200">「足元のオーラ」</strong>などの特徴的な色を登録してください。<br/>
+                          ・文字と色の両方(ハイブリッド)で判定されるため、不特定多数いる通常の敵も色の登録が有効です。
+                        </p>
+                        <p className="text-emerald-500/70 border-t border-amber-900/30 pt-1 mt-1">
+                          ※メタル、かくてい！等の古い項目は削除され、本システムに統合されました。
+                        </p>
                       </div>
                     </details>
                   </div>

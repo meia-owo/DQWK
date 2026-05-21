@@ -57,6 +57,7 @@ class OverlayService : Service() {
         const val ACTION_STOP_SERVICE = "com.Kproject.app.ACTION_STOP_SERVICE"
         const val ACTION_TOGGLE_AUTO = "com.Kproject.app.ACTION_TOGGLE_AUTO"
         
+        val EXCLUDE_REGEX = Regex("[^a-z0-9!|壺つぼツボ回復ほこら祠攻撃経験値かくとくp\\+P]")
         var instance: OverlayService? = null
     }
 
@@ -82,6 +83,9 @@ class OverlayService : Service() {
     private var screenWidth = 0
     private var screenHeight = 0
     private var screenDensity = 0
+    
+    // ボトルネック対策6: スレッドプールの導入 (毎回のThread{}.start()によるGC負荷を回避)
+    private val ocrExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     private lateinit var tessBaseAPI: TessBaseAPI
     private var isOcrInitialized = false
@@ -91,12 +95,19 @@ class OverlayService : Service() {
     private var totalKills = 0
     private var totalExp = 0
     private var targetKeywords = listOf("！")
+    private var normalEnemyColor: IntArray? = null
+    private var strongEnemyColor: IntArray? = null
+    private var eventPopColor: IntArray? = null
+    private var potColor: IntArray? = null
+    private var hokoraColor: IntArray? = null
     private var targetPot = true
+    private var enablePotFilter = true
     private var targetHokora = true
     private var tapOffsetX = 0f
     private var tapOffsetY = 0f
     private var unlockBtnPos = Pair(0.5f, 0.92f)
     private var charCenterPos = Pair(0.5f, 0.6f)
+    private var resultBtnPos: Pair<Float, Float>? = null
     private var circleRadius = 0.25f
     private var scanInterval = 3000L
     private var enableResultDetection = true
@@ -139,7 +150,14 @@ class OverlayService : Service() {
                     val keywordsStr = intent.getStringExtra("targetKeywords") ?: "！"
                     targetKeywords = keywordsStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
                     
+                    if (intent.hasExtra("normalEnemyColor")) normalEnemyColor = intent.getIntArrayExtra("normalEnemyColor")
+                    if (intent.hasExtra("strongEnemyColor")) strongEnemyColor = intent.getIntArrayExtra("strongEnemyColor")
+                    if (intent.hasExtra("eventPopColor")) eventPopColor = intent.getIntArrayExtra("eventPopColor")
+                    if (intent.hasExtra("potColor")) potColor = intent.getIntArrayExtra("potColor")
+                    if (intent.hasExtra("hokoraColor")) hokoraColor = intent.getIntArrayExtra("hokoraColor")
+
                     targetPot = intent.getBooleanExtra("targetPot", true)
+                    enablePotFilter = intent.getBooleanExtra("enablePotFilter", true)
                     targetHokora = intent.getBooleanExtra("targetHokora", true)
                     
                     unlockBtnPos = Pair(
@@ -150,6 +168,13 @@ class OverlayService : Service() {
                         intent.getFloatExtra("charCenterX", 0.5f),
                         intent.getFloatExtra("charCenterY", 0.6f)
                     )
+                    
+                    val resX = intent.getFloatExtra("resultBtnX", -1f)
+                    val resY = intent.getFloatExtra("resultBtnY", -1f)
+                    if (resX >= 0f && resY >= 0f) {
+                        resultBtnPos = Pair(resX, resY)
+                    }
+
                     circleRadius = intent.getFloatExtra("circleRadius", 0.25f)
 
                     isAutoBattleEnabled = intent.getBooleanExtra("isAutoBattleEnabled", true)
@@ -194,6 +219,10 @@ class OverlayService : Service() {
                     
                     overlayView.findViewById<LinearLayout>(R.id.layout_debug).visibility = if (isDebugMode) View.VISIBLE else View.GONE
                     updateNotification()
+                }
+                "com.Kproject.app.START_CALIBRATION" -> {
+                    val calType = intent.getStringExtra("type") ?: "anchor"
+                    startCalibrationUI(calType)
                 }
                 Intent.ACTION_SCREEN_OFF -> {
                     isScreenOn = false
@@ -308,6 +337,7 @@ class OverlayService : Service() {
 
         val filter = IntentFilter().apply {
             addAction("com.Kproject.app.UPDATE_SETTINGS")
+            addAction("com.Kproject.app.START_CALIBRATION")
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
         }
@@ -382,6 +412,12 @@ class OverlayService : Service() {
                 val keywordsStr = intent.getStringExtra("targetKeywords") ?: "！"
                 targetKeywords = keywordsStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
                 
+                if (intent.hasExtra("normalEnemyColor")) normalEnemyColor = intent.getIntArrayExtra("normalEnemyColor")
+                if (intent.hasExtra("strongEnemyColor")) strongEnemyColor = intent.getIntArrayExtra("strongEnemyColor")
+                if (intent.hasExtra("eventPopColor")) eventPopColor = intent.getIntArrayExtra("eventPopColor")
+                if (intent.hasExtra("potColor")) potColor = intent.getIntArrayExtra("potColor")
+                if (intent.hasExtra("hokoraColor")) hokoraColor = intent.getIntArrayExtra("hokoraColor")
+
                 isAutoBattleEnabled = intent.getBooleanExtra("isAutoBattleEnabled", true)
                 tapOffsetX = intent.getFloatExtra("tapOffsetX", 0f)
                 tapOffsetY = intent.getFloatExtra("tapOffsetY", 0f)
@@ -396,6 +432,7 @@ class OverlayService : Service() {
                 enableDictCorrection = intent.getBooleanExtra("enableDictCorrection", true)
                 pauseScanOnBattle = intent.getBooleanExtra("pauseScanOnBattle", true)
                 targetPot = intent.getBooleanExtra("targetPot", true)
+                enablePotFilter = intent.getBooleanExtra("enablePotFilter", true)
                 targetHokora = intent.getBooleanExtra("targetHokora", true)
                 enablePartyScan = intent.getBooleanExtra("enablePartyScan", true)
                 autoBrightness = intent.getBooleanExtra("autoBrightness", false)
@@ -420,6 +457,15 @@ class OverlayService : Service() {
                 }
                 if (intent.hasExtra("charCenterX")) {
                     charCenterPos = intent.getFloatExtra("charCenterX", 0.5f) to intent.getFloatExtra("charCenterY", 0.5f)
+                }
+                if (intent.hasExtra("resultBtnX")) {
+                    val rx = intent.getFloatExtra("resultBtnX", -1f)
+                    val ry = intent.getFloatExtra("resultBtnY", -1f)
+                    if (rx >= 0f && ry >= 0f) {
+                        resultBtnPos = Pair(rx, ry)
+                    } else {
+                        resultBtnPos = null
+                    }
                 }
                 if (intent.hasExtra("circleRadius")) {
                     circleRadius = intent.getFloatExtra("circleRadius", 0.5f)
@@ -499,7 +545,18 @@ class OverlayService : Service() {
                     val height = cropRect.height().coerceIn(1, fullBitmap.height - startY)
 
                     val croppedBitmap = Bitmap.createBitmap(fullBitmap, startX, startY, width, height)
-                    val processedBitmap = preprocessBitmap(croppedBitmap)
+                    
+                    // ボトルネック対策3: OCR解像度最適化 (高解像クロップ画像を縮小してOCRと二値化処理を劇的に高速化)
+                    val maxOcrWidth = 400
+                    val ocrRatio = if (width > maxOcrWidth) maxOcrWidth.toFloat() / width else 1f
+                    val ocrBitmap = if (width > maxOcrWidth) {
+                        val targetOcrHeight = (height * ocrRatio).toInt().coerceAtLeast(1)
+                        Bitmap.createScaledBitmap(croppedBitmap, maxOcrWidth, targetOcrHeight, true)
+                    } else {
+                        croppedBitmap
+                    }
+                    
+                    val processedBitmap = preprocessBitmap(ocrBitmap)
 
                     if (isDebugMode) {
                         broadcastOcrPreview(processedBitmap)
@@ -537,7 +594,8 @@ class OverlayService : Service() {
                     }
                     
                     if (enableRegexFilter) {
-                        recognizedText = recognizedText.replace(Regex("[^a-z0-9!|壺つぼツボ回復ほこら祠攻撃]"), "")
+                        // ボトルネック対策4: 正規表現のコンパイル排除 (コンパニオンオブジェクトに定義した静的正規表現を再利用)
+                        recognizedText = recognizedText.replace(EXCLUDE_REGEX, "")
                     }
                     
                     handler.post {
@@ -558,12 +616,80 @@ class OverlayService : Service() {
                         true
                     }
 
-                    val isTargetMatch = hasAnchor && (targetKeywords.any { keyword -> 
+                    val isTargetMatchByText = hasAnchor && (targetKeywords.any { keyword -> 
                         recognizedText.contains(keyword.lowercase(Locale.US))
                     } || baseTriggerWords.any { recognizedText.contains(it) })
+                    
+                    val isNormalEnemyTargeted = targetKeywords.any { it.contains("通常の敵") }
+                    val isStrongEnemyTargeted = targetKeywords.any { it.contains("強敵") }
+                    val isEventPopTargeted = targetKeywords.any { it.contains("イベントポップ") }
+                    
+                    var targetTapPoint: Pair<Float, Float>? = null
 
-                    val isPotMatch = targetPot && potKeywords.any { recognizedText.contains(it) }
-                    val isHokoraMatch = targetHokora && hokoraKeywords.any { recognizedText.contains(it) }
+                    val normalColorCenter = if (isNormalEnemyTargeted) getTargetColorCenter(ocrBitmap, normalEnemyColor) else null
+                    val strongColorCenter = if (isStrongEnemyTargeted) getTargetColorCenter(ocrBitmap, strongEnemyColor) else null
+                    val eventColorCenter = if (isEventPopTargeted) getTargetColorCenter(ocrBitmap, eventPopColor) else null
+                    
+                    val isNormalColorMatched = normalColorCenter != null
+                    val isStrongColorMatched = strongColorCenter != null
+                    val isEventPopColorMatched = eventColorCenter != null
+                    
+                    val isTargetMatch = isTargetMatchByText || isNormalColorMatched || isStrongColorMatched || isEventPopColorMatched
+
+                    if (isNormalColorMatched && normalColorCenter != null) targetTapPoint = normalColorCenter
+                    else if (isStrongColorMatched && strongColorCenter != null) targetTapPoint = strongColorCenter
+                    else if (isEventPopColorMatched && eventColorCenter != null) targetTapPoint = eventColorCenter
+
+                    val isPotKeywordMatched = targetPot && potKeywords.any { recognizedText.contains(it) }
+                    val potColorCenter = if (targetPot) getTargetColorCenter(ocrBitmap, potColor) else null
+                    val isPotCustomColorMatched = targetPot && potColorCenter != null
+                    var isPotColorMatched = true
+                    if (isPotKeywordMatched && enablePotFilter && potColor == null) {
+                        // 縮小済みのocrBitmapを使用することで色判定も極めて高速
+                        isPotColorMatched = hasPotColors(ocrBitmap)
+                        if (!isPotColorMatched) {
+                            Log.d(TAG, "Pot keyword matched but color check failed: $recognizedText")
+                        }
+                    }
+                    val isPotMatch = (isPotKeywordMatched && isPotColorMatched) || isPotCustomColorMatched
+                    if (isPotCustomColorMatched && targetTapPoint == null && potColorCenter != null) targetTapPoint = potColorCenter
+                    
+                    val isHokoraKeywordMatched = targetHokora && hokoraKeywords.any { recognizedText.contains(it) }
+                    val hokoraColorCenter = if (targetHokora) getTargetColorCenter(ocrBitmap, hokoraColor) else null
+                    val isHokoraColorMatched = targetHokora && hokoraColorCenter != null
+                    val isHokoraMatch = isHokoraKeywordMatched || isHokoraColorMatched
+                    if (isHokoraColorMatched && targetTapPoint == null && hokoraColorCenter != null) targetTapPoint = hokoraColorCenter
+
+                    // ボトルネック・モックデータ対策: 実質のEXPを取得するロジック
+                    val expRegex = Regex("exp\\+?(\\d+)|(\\d+)経験値")
+                    val expMatch = expRegex.find(recognizedText)
+                    
+                    if (expMatch != null) {
+                        val expValStr = expMatch.groupValues[1].takeIf { it.isNotEmpty() } ?: expMatch.groupValues[2]
+                        val expVal = expValStr.toIntOrNull()
+                        if (expVal != null && expVal > 0) {
+                            totalExp += expVal
+                            totalKills += 1
+                            handler.post {
+                                overlayView.findViewById<TextView>(R.id.tv_kills).text = totalKills.toString()
+                                overlayView.findViewById<TextView>(R.id.tv_exp).text = totalExp.toString()
+                                updateNotification()
+                                broadcastLog("Battle ends. EXP: $expVal", "success")
+                                broadcastStats("Battle ends", expVal)
+                            }
+                            // 結果画面なので画面中央付近か設定位置をタップして次へ進める
+                            val cx = (screenWidth * (resultBtnPos?.first ?: charCenterPos.first))
+                            val cy = (screenHeight * (resultBtnPos?.second ?: charCenterPos.second))
+                            AutoTapService.instance?.performTap(cx, cy)
+                            
+                            isProcessing = false
+                            if (ocrBitmap != croppedBitmap) ocrBitmap.recycle()
+                            fullBitmap.recycle()
+                            croppedBitmap.recycle()
+                            processedBitmap.recycle()
+                            return@post
+                        }
+                    }
 
                     if (isTargetMatch || isPotMatch || isHokoraMatch) {
                         retryCounter = 0
@@ -577,17 +703,19 @@ class OverlayService : Service() {
                             broadcastLog("Target detected: $recognizedText", "success")
                         }
 
-                        totalKills += 1
-                        totalExp += Random.nextInt(10, 50)
-                        overlayView.findViewById<TextView>(R.id.tv_kills).text = totalKills.toString()
-                        overlayView.findViewById<TextView>(R.id.tv_exp).text = totalExp.toString()
-                        updateNotification()
-                        broadcastStats("Detected: $recognizedText")
-
+                        // ここでのモックデータ加算を削除。EXPとKill数は結果画面(上記)で集計する
+                        // totalKills += 1
+                        // totalExp += Random.nextInt(10, 50)
+                        
                         val jitterX = Random.nextInt(-10, 10).toFloat()
                         val jitterY = Random.nextInt(-10, 10).toFloat()
 
-                        if (pullMargin > 1.0f && !isPotMatch && !isHokoraMatch) {
+                        if (targetTapPoint != null) {
+                            val tapX = startX + (targetTapPoint.first / ocrRatio) + jitterX
+                            val tapY = startY + (targetTapPoint.second / ocrRatio) + jitterY
+                            AutoTapService.instance?.performTap(tapX, tapY)
+                            broadcastLog("Tapped exactly on target color position", "info")
+                        } else if (pullMargin > 1.0f && !isPotMatch && !isHokoraMatch) {
                             val cx = (screenWidth * charCenterPos.first)
                             val cy = (screenHeight * charCenterPos.second)
                             val r = screenWidth * circleRadius
@@ -673,9 +801,12 @@ class OverlayService : Service() {
                     }
                 }
                 
+                if (ocrBitmap != croppedBitmap) {
+                    ocrBitmap.recycle()
+                }
                 fullBitmap.recycle()
-                    croppedBitmap.recycle()
-                    processedBitmap.recycle()
+                croppedBitmap.recycle()
+                processedBitmap.recycle()
                 } catch (e: Exception) {
                     Log.e(TAG, "Error during capture/recognize: ${e.message}")
                     broadcastLog("OCR Error: ${e.message}", "error")
@@ -699,18 +830,101 @@ class OverlayService : Service() {
         paint.colorFilter = filter
         canvas.drawBitmap(original, 0f, 0f, paint)
         
-        // 二値化 (簡易的な閾値処理)
+        // 二値化 (高速なバルク配列処理。JNI境界呼び出しを数万回から1回に低減)
+        val pixels = IntArray(width * height)
+        bmpGrayscale.getPixels(pixels, 0, width, 0, 0, width, height)
+        bmpGrayscale.recycle()
+        
+        for (i in pixels.indices) {
+            val pixel = pixels[i]
+            // グレースケール化済みの画像なら、R/G/Bのいずれか1チャンネルを読み出すだけで十分高速
+            val gray = (pixel shr 16) and 0xFF
+            pixels[i] = if (gray > 128) Color.WHITE else Color.BLACK
+        }
+        
         val bmpBinary = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val pixel = bmpGrayscale.getPixel(x, y)
-                val gray = (Color.red(pixel) + Color.green(pixel) + Color.blue(pixel)) / 3
-                val color = if (gray > 128) Color.WHITE else Color.BLACK
-                bmpBinary.setPixel(x, y, color)
+        bmpBinary.setPixels(pixels, 0, width, 0, 0, width, height)
+        return bmpBinary
+    }
+
+    private fun getTargetColorCenter(bitmap: Bitmap, targetRgb: IntArray?, tolerance: Int = 30): Pair<Float, Float>? {
+        if (targetRgb == null || targetRgb.size < 3) return null
+        val width = bitmap.width
+        val height = bitmap.height
+        var matchCount = 0
+        var sumX = 0L
+        var sumY = 0L
+        
+        val step = 4
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        
+        val tr = targetRgb[0]
+        val tg = targetRgb[1]
+        val tb = targetRgb[2]
+        
+        for (y in 0 until height step step) {
+            val offset = y * width
+            for (x in 0 until width step step) {
+                val pixel = pixels[offset + x]
+                val r = Color.red(pixel)
+                val g = Color.green(pixel)
+                val b = Color.blue(pixel)
+                
+                val dist = Math.sqrt(
+                    Math.pow((r - tr).toDouble(), 2.0) +
+                    Math.pow((g - tg).toDouble(), 2.0) +
+                    Math.pow((b - tb).toDouble(), 2.0)
+                )
+                
+                if (dist <= tolerance) {
+                    sumX += x
+                    sumY += y
+                    matchCount++
+                }
             }
         }
-        bmpGrayscale.recycle()
-        return bmpBinary
+        
+        if (matchCount >= 5) {
+            return Pair(sumX.toFloat() / matchCount, sumY.toFloat() / matchCount)
+        }
+        return null
+    }
+
+    private fun hasPotColors(bitmap: Bitmap): Boolean {
+        val width = bitmap.width
+        val height = bitmap.height
+        var potPixelCount = 0
+        val hsv = FloatArray(3)
+        
+        // 高速化：ピクセルの一括バッチ読み込み
+        val step = 4
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        
+        for (y in 0 until height step step) {
+            val offset = y * width
+            for (x in 0 until width step step) {
+                val pixel = pixels[offset + x]
+                Color.colorToHSV(pixel, hsv)
+                val hue = hsv[0]
+                val sat = hsv[1]
+                val value = hsv[2]
+                
+                // Normal green pot: hue between 70.0f and 160.0f, substantial saturation and brightness
+                val isGreen = (hue in 70.0f..160.0f) && (sat > 0.3f) && (value > 0.3f)
+                // Event purple pot: hue between 260.0f and 340.0f, substantial saturation and brightness
+                val isPurple = (hue in 260.0f..340.0f) && (sat > 0.3f) && (value > 0.3f)
+                
+                if (isGreen || isPurple) {
+                    potPixelCount++
+                }
+            }
+        }
+        
+        val matched = potPixelCount >= 20
+        Log.d(TAG, "hasPotColors: potPixelCount=$potPixelCount, matched=$matched")
+        return matched
     }
 
     private fun broadcastOcrPreview(bitmap: Bitmap) {
@@ -840,12 +1054,170 @@ class OverlayService : Service() {
         }
     }
 
-    private fun broadcastStats(log: String? = null) {
+    private fun broadcastStats(log: String? = null, expGain: Int = 0) {
         val intent = Intent("com.Kproject.app.UPDATE_STATS")
         intent.putExtra("kills", totalKills)
         intent.putExtra("exp", totalExp)
+        intent.putExtra("expGain", expGain)
         if (log != null) intent.putExtra("log", log)
         sendBroadcast(intent)
+    }
+
+    private var calibrationView: View? = null
+    private var calibrationType: String = ""
+
+    private fun startCalibrationUI(type: String) {
+        if (calibrationView != null) return
+        calibrationType = type
+        
+        // Hide main overlay temporarily
+        overlayView.visibility = View.GONE
+        
+        val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+        
+        // Set to full screen but NOT focusable so touch passes everywhere EXCEPT buttons
+        val calParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            layoutFlag,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        )
+        
+        val ctx = this
+        val frameLayout = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#44000000"))
+        }
+        
+        // Target Crosshair ImageView (we just draw a plus or use a text view)
+        val crosshair = TextView(this).apply {
+            text = "＋"
+            textSize = 60f
+            setTextColor(Color.RED)
+            gravity = Gravity.CENTER
+            setShadowLayer(4f, 0f, 0f, Color.BLACK)
+        }
+        
+        // Draggable container for crosshair so user can drag it around
+        val crosshairContainer = FrameLayout(this).apply {
+            val s = (screenWidth * 0.2f).toInt()
+            layoutParams = FrameLayout.LayoutParams(s, s).apply {
+                gravity = Gravity.CENTER
+            }
+            addView(crosshair)
+        }
+        
+        // Setup Drag on crosshair
+        var dX = 0f
+        var dY = 0f
+        crosshairContainer.setOnTouchListener { view, event ->
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    dX = view.x - event.rawX
+                    dY = view.y - event.rawY
+                    true
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    view.animate()
+                        .x(event.rawX + dX)
+                        .y(event.rawY + dY)
+                        .setDuration(0)
+                        .start()
+                    true
+                }
+                else -> false
+            }
+        }
+        
+        // Top label text
+        val titleText = TextView(this).apply {
+            text = "キャリブレーション: $type\n十字を対象に合わせて保存を押してください"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setBackgroundColor(Color.parseColor("#88000000"))
+            setPadding(20, 20, 20, 20)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.TOP }
+            gravity = Gravity.CENTER
+        }
+        
+        // Save button
+        val saveBtn = android.widget.Button(this).apply {
+            text = "SAVE $type"
+            setBackgroundColor(Color.parseColor("#10B981"))
+            setTextColor(Color.WHITE)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = 100
+            }
+            setOnClickListener {
+                endCalibration(crosshairContainer)
+            }
+        }
+        
+        frameLayout.addView(crosshairContainer)
+        frameLayout.addView(titleText)
+        frameLayout.addView(saveBtn)
+        
+        calibrationView = frameLayout
+        windowManager.addView(calibrationView, calParams)
+    }
+    
+    private fun endCalibration(crosshairContainer: View) {
+        val centerX = crosshairContainer.x + (crosshairContainer.width / 2f)
+        val centerY = crosshairContainer.y + (crosshairContainer.height / 2f)
+        val xPct = (centerX / screenWidth).coerceIn(0f, 1f)
+        val yPct = (centerY / screenHeight).coerceIn(0f, 1f)
+        
+        var colorR = 0
+        var colorG = 0
+        var colorB = 0
+        
+        val base64Str = takeScreenshot()
+        if (base64Str != null) {
+            try {
+                val decodedBytes = android.util.Base64.decode(base64Str, android.util.Base64.DEFAULT)
+                val bitmap = android.graphics.BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
+                if (bitmap != null) {
+                    val px = (xPct * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
+                    val py = (yPct * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
+                    val pixel = bitmap.getPixel(px, py)
+                    colorR = Color.red(pixel)
+                    colorG = Color.green(pixel)
+                    colorB = Color.blue(pixel)
+                    bitmap.recycle()
+                }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        
+        val intent = Intent("com.Kproject.app.CALIBRATION_FINISHED")
+        intent.putExtra("type", calibrationType)
+        intent.putExtra("xPct", xPct)
+        intent.putExtra("yPct", yPct)
+        intent.putExtra("colorR", colorR)
+        intent.putExtra("colorG", colorG)
+        intent.putExtra("colorB", colorB)
+        sendBroadcast(intent)
+        
+        broadcastLog("$calibrationType の位置と色(${colorR},${colorG},${colorB})を保存しました", "success")
+        
+        if (calibrationView != null) {
+            windowManager.removeView(calibrationView)
+            calibrationView = null
+        }
+        overlayView.visibility = View.VISIBLE
     }
 
     private fun setupUI() {
@@ -961,7 +1333,10 @@ class OverlayService : Service() {
             }
         }
         tessBaseAPI = TessBaseAPI()
-        if (tessBaseAPI.init(dataPath.absolutePath, "jpn")) isOcrInitialized = true
+        if (tessBaseAPI.init(dataPath.absolutePath, "jpn")) {
+            isOcrInitialized = true
+            tessBaseAPI.setVariable("tessedit_char_whitelist", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!|壺つぼツボ回復ほこら祠攻撃レベルlvi経験値かくとく+")
+        }
     }
 
     private fun startForegroundServiceWithNotification() {
