@@ -318,14 +318,16 @@ class MainActivity : BridgeActivity() {
     }
 
     fun showAccessibilityDialog() {
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Accessibility Service Required")
-            .setMessage("Please enable the DQWEXP Accessibility Service to allow auto-tapping.")
-            .setPositiveButton("Settings") { _, _ ->
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        runOnUiThread {
+            AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Accessibility Service Required")
+                .setMessage("Please enable the DQWEXP Accessibility Service to allow auto-tapping.")
+                .setPositiveButton("Settings") { _, _ ->
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
     }
 
     fun requestBatteryOptimizationExemption() {
@@ -405,9 +407,9 @@ class MainActivity : BridgeActivity() {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(mainActivity)) {
                         val intent = Intent(
                             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + context.mainActivity.packageName)
+                            Uri.parse("package:" + mainActivity.packageName)
                         )
-                        startActivity(intent)
+                        mainActivity.startActivity(intent)
                     }
                 }
                 "accessibility" -> {
@@ -449,11 +451,11 @@ class MainActivity : BridgeActivity() {
                 return
             }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(mainActivity)) {
                 mainActivity.pendingCall = call
                 val intent = Intent(
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + context.mainActivity.packageName)
+                    Uri.parse("package:" + mainActivity.packageName)
                 )
                 mainActivity.startActivityForResult(intent, mainActivity.REQUEST_OVERLAY_PERMISSION)
             } else {
@@ -555,21 +557,21 @@ class MainActivity : BridgeActivity() {
         }
     }
 
-    fun mainActivity.startMediaProjection(call: PluginCall) {
-        mainActivity.pendingCall = call
-        val manager = mainActivity.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+    fun startMediaProjection(call: PluginCall) {
+        pendingCall = call
+        val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         
-        if (requestCode == mainActivity.REQUEST_OVERLAY_PERMISSION) {
+        if (requestCode == REQUEST_OVERLAY_PERMISSION) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
-                mainActivity.pendingCall?.let { mainActivity.startMediaProjection(it) }
+                pendingCall?.let { startMediaProjection(it) }
             } else {
-                mainActivity.pendingCall?.reject("Overlay permission denied")
-                mainActivity.pendingCall = null
+                pendingCall?.reject("Overlay permission denied")
+                pendingCall = null
             }
         } else if (requestCode == REQUEST_MEDIA_PROJECTION) {
             if (resultCode == RESULT_OK && data != null) {
@@ -577,12 +579,12 @@ class MainActivity : BridgeActivity() {
                 intent.putExtra("EXTRA_RESULT_CODE", resultCode)
                 intent.putExtra("EXTRA_RESULT_DATA", data)
                 // 起動時に現在の設定を渡す
-                intent.putExtra("targetKeywords", mainActivity.currentTargetKeywords)
-                intent.putExtra("isAutoBattleEnabled", mainActivity.currentIsAutoBattleEnabled)
-                intent.putExtra("tapOffsetX", mainActivity.currentTapOffsetX)
-                intent.putExtra("tapOffsetY", mainActivity.currentTapOffsetY)
-                intent.putExtra("scanInterval", mainActivity.currentScanInterval)
-                intent.putExtra("enableResultDetection", mainActivity.currentEnableResultDetection)
+                intent.putExtra("targetKeywords", currentTargetKeywords)
+                intent.putExtra("isAutoBattleEnabled", currentIsAutoBattleEnabled)
+                intent.putExtra("tapOffsetX", currentTapOffsetX)
+                intent.putExtra("tapOffsetY", currentTapOffsetY)
+                intent.putExtra("scanInterval", currentScanInterval)
+                intent.putExtra("enableResultDetection", currentEnableResultDetection)
 
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -590,14 +592,14 @@ class MainActivity : BridgeActivity() {
                     } else {
                         startService(intent)
                     }
-                    mainActivity.pendingCall?.resolve()
+                    pendingCall?.resolve()
                 } catch (e: Exception) {
-                    mainActivity.pendingCall?.reject("Failed to start service: ${e.message}")
+                    pendingCall?.reject("Failed to start service: ${e.message}")
                 }
             } else {
-                mainActivity.pendingCall?.reject("Media projection permission denied or cancelled")
+                pendingCall?.reject("Media projection permission denied or cancelled")
             }
-            mainActivity.pendingCall = null
+            pendingCall = null
         }
     }
 }

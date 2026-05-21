@@ -468,6 +468,7 @@ export default function App() {
           overlay: status.overlayPermission,
           accessibility: status.accessibilityService,
           service: status.isServiceRunning,
+          batteryOptimization: status.batteryOptimizationExempt,
           camera: status.cameraPermission
         });
         setNetworkStatus(status.network);
