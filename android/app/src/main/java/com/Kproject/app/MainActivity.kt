@@ -363,7 +363,7 @@ class MainActivity : BridgeActivity() {
         @PluginMethod
         fun stopOverlay(call: PluginCall) {
             val intent = Intent(mainActivity, OverlayService::class.java)
-            stopService(intent)
+            mainActivity.stopService(intent)
             call.resolve()
         }
 
