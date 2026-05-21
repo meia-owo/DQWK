@@ -614,12 +614,12 @@ export default function App() {
   const startCapture = async () => {
     try {
       if (Capacitor.isNativePlatform()) {
-        const res = await OverlayPlugin.takeScreenshot();
-        if (res && res.base64) {
-          setScreenshotBase64(`data:image/jpeg;base64,${res.base64}`);
-          setShowCaptureWarning(false);
-        } else {
-          alert('スクリーンショットの取得に失敗しました。オーバーレイが開始されているか確認してください。');
+        setShowCaptureWarning(false);
+        try {
+          await OverlayPlugin.startOverlay();
+          // 設定同期はuseEffect側で行われます
+        } catch (e) {
+          alert(`エラー: オーバーレイの開始に失敗しました。\n詳細: ${e}\n権限が正しく設定されているか確認してください。`);
         }
       } else {
         let mediaStream: MediaStream;

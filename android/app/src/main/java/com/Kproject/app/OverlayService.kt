@@ -81,6 +81,7 @@ class OverlayService : Service() {
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
+    private var lastCapturedBase64: String? = null
     private var screenWidth = 0
     private var screenHeight = 0
     private var screenDensity = 0
@@ -1393,7 +1394,7 @@ class OverlayService : Service() {
     }
 
     fun takeScreenshot(): String? {
-        if (imageReader == null) return null
+        if (imageReader == null) return lastCapturedBase64
         
         return try {
             val image: Image? = imageReader?.acquireLatestImage()
@@ -1424,13 +1425,12 @@ class OverlayService : Service() {
                 val byteArray = outputStream.toByteArray()
                 croppedBitmap.recycle()
                 
-                android.util.Base64.encodeToString(byteArray, android.util.Base64.NO_WRAP)
-            } else {
-                null
+                lastCapturedBase64 = android.util.Base64.encodeToString(byteArray, android.util.Base64.NO_WRAP)
             }
+            lastCapturedBase64
         } catch (e: Exception) {
             Log.e(TAG, "Failed to take screenshot: ${e.message}")
-            null
+            lastCapturedBase64
         }
     }
 
