@@ -2444,10 +2444,20 @@ export default function App() {
                       <Monitor size={14} /> オーバーレイ表示
                     </label>
                     <button 
-                      onClick={() => stream ? stopCapture() : setShowCaptureWarning(true)}
-                      className={`px-3 py-1 rounded text-xs font-bold ${stream ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
+                      onClick={() => {
+                        if (Capacitor.isNativePlatform()) {
+                          if (permissionStatus.service) {
+                            OverlayPlugin.stopOverlay();
+                          } else {
+                            setShowCaptureWarning(true);
+                          }
+                        } else {
+                          stream ? stopCapture() : setShowCaptureWarning(true);
+                        }
+                      }}
+                      className={`px-3 py-1 rounded text-xs font-bold ${(Capacitor.isNativePlatform() ? permissionStatus.service : !!stream) ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-800' : 'bg-[#222] text-gray-500 border border-[#333]'}`}
                     >
-                      {stream ? 'ON' : 'OFF'}
+                      {(Capacitor.isNativePlatform() ? permissionStatus.service : !!stream) ? 'ON' : 'OFF'}
                     </button>
                   </div>
                   <p className="text-[10px] text-gray-500 mt-1">ゲーム画面を背景に透かして表示します</p>
