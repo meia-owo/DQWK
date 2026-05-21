@@ -1230,6 +1230,7 @@ class OverlayService : Service() {
             (it as TextView).text = if (isCollapsed) "▶" else "▼"
             windowManager.updateViewLayout(overlayView, params)
         }
+
         overlayView.findViewById<TextView>(R.id.btn_auto_battle).setOnClickListener {
             isAutoBattleEnabled = !isAutoBattleEnabled
             
